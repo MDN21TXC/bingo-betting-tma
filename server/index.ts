@@ -371,20 +371,17 @@ app.get('/api/ledger/:playerId?', optionalSession, (req: any, res) => {
 });
 
 // Deposit funds
-app.post('/api/wallet/deposit', optionalSession, async (req: any, res) => {
+app.post('/api/wallet/deposit', authenticateSession, async (req: any, res) => {
   const { amount, paymentMethod } = req.body;
   const requestedId = req.body.playerId;
   const currentUserId = req.user?.playerId;
 
   // IDOR Protection: Reject attempts to deposit to another user's account
-  if (currentUserId && requestedId && requestedId !== currentUserId) {
+  if (requestedId && requestedId !== currentUserId) {
     return res.status(403).json({ error: 'Access denied: Cannot perform financial operations on another account' });
   }
 
-  const targetPlayerId = currentUserId || requestedId;
-  if (!targetPlayerId) {
-    return res.status(401).json({ error: 'Authentication required' });
-  }
+  const targetPlayerId = currentUserId;
 
   try {
     const depositAmount = parseFloat(amount);
@@ -394,33 +391,35 @@ app.post('/api/wallet/deposit', optionalSession, async (req: any, res) => {
     const userObj = ledgerService.getUser(targetPlayerId);
     const depositReq = ledgerService.createDepositRequest(
       targetPlayerId,
-      userObj?.username || 'Player',
+      userObj?.username || req.user.username || 'Player',
       depositAmount,
       paymentMethod || 'Telebirr'
     );
-    const { deposit, entry } = await ledgerService.approveDeposit('SYSTEM_AUTO', depositReq.id);
-    const user = ledgerService.getUser(targetPlayerId);
-    res.json({ success: true, entry, user, deposit });
+    // Security: Deposits require admin approval, no SYSTEM_AUTO
+    res.json({
+      success: true,
+      deposit: depositReq,
+      request: depositReq,
+      user: ledgerService.getUser(targetPlayerId),
+      message: 'Deposit request submitted. Pending admin verification.'
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // Withdraw funds
-app.post('/api/wallet/withdraw', optionalSession, async (req: any, res) => {
+app.post('/api/wallet/withdraw', authenticateSession, async (req: any, res) => {
   const { amount, address } = req.body;
   const requestedId = req.body.playerId;
   const currentUserId = req.user?.playerId;
 
   // IDOR Protection: Reject attempts to withdraw from another user's account
-  if (currentUserId && requestedId && requestedId !== currentUserId) {
+  if (requestedId && requestedId !== currentUserId) {
     return res.status(403).json({ error: 'Access denied: Cannot perform financial operations on another account' });
   }
 
-  const targetPlayerId = currentUserId || requestedId;
-  if (!targetPlayerId) {
-    return res.status(401).json({ error: 'Authentication required' });
-  }
+  const targetPlayerId = currentUserId;
 
   try {
     const withdrawAmount = parseFloat(amount);
@@ -428,15 +427,20 @@ app.post('/api/wallet/withdraw', optionalSession, async (req: any, res) => {
       return res.status(400).json({ error: 'Invalid withdrawal amount' });
     }
     const userObj = ledgerService.getUser(targetPlayerId);
+    // Balance is atomically reserved and held; status is PENDING
     const withdrawalReq = ledgerService.createWithdrawalRequest(
       targetPlayerId,
-      userObj?.username || 'Player',
+      userObj?.username || req.user.username || 'Player',
       withdrawAmount,
       address || 'Telebirr / Bank Account'
     );
-    const { withdrawal, entry } = await ledgerService.approveWithdrawal('SYSTEM_AUTO', withdrawalReq.id);
-    const user = ledgerService.getUser(targetPlayerId);
-    res.json({ success: true, entry, user, withdrawal });
+    res.json({
+      success: true,
+      withdrawal: withdrawalReq,
+      request: withdrawalReq,
+      user: ledgerService.getUser(targetPlayerId),
+      message: 'Withdrawal request submitted. Balance reserved pending admin review.'
+    });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
@@ -548,6 +552,7 @@ app.post('/api/referral/claim', optionalSession, async (req: any, res) => {
   if (!targetPlayerId) {
     return res.status(401).json({ error: 'Authentication required' });
   }
+
   try {
     const entry = await ledgerService.recordTransaction(
       targetPlayerId,
@@ -580,50 +585,11 @@ app.post('/api/game/verify-fairness', (req, res) => {
   });
 });
 
-// ---------------- WebSocket Gateway ----------------
-
 // ---------------- Admin REST API Endpoints (Strict Server-Side Role Enforcement) ----------------
 
-// 0. Verify admin passcode & promote user or issue admin session
-app.post('/api/admin/verify-passcode', optionalSession, async (req: any, res) => {
-  const { passcode } = req.body;
-  const configuredSecret = process.env.ADMIN_SECRET_KEY || 'admin123';
-
-  if (
-    !passcode ||
-    (passcode !== configuredSecret &&
-      passcode !== 'Admin@123!' &&
-      passcode !== 'tok_admin_master_key')
-  ) {
-    return res.status(401).json({ error: 'Invalid admin passcode. Please try again.' });
-  }
-
-  const currentUserId = req.user?.playerId;
-  if (currentUserId) {
-    const user = authService.getUserById(currentUserId);
-    if (user) {
-      user.role = 'ADMIN';
-      ledgerService.getOrCreateUser(user.id, user.username, undefined, 'ADMIN');
-    }
-    const updatedUser = authService.getUserByToken(req.sessionToken);
-    return res.json({
-      success: true,
-      role: 'ADMIN',
-      token: req.sessionToken,
-      user: updatedUser || { ...req.user, role: 'ADMIN' },
-      message: 'Admin privileges unlocked successfully!'
-    });
-  }
-
-  // If unauthenticated / spectator, grant master admin session
-  const adminUser = authService.getUserById('usr_admin');
-  return res.json({
-    success: true,
-    role: 'ADMIN',
-    token: 'tok_admin_master_key',
-    user: adminUser,
-    message: 'Master Admin session initialized!'
-  });
+// Verify Admin Status endpoint - Requires valid session with role ADMIN
+app.get('/api/admin/verify', requireAdmin, (req: any, res) => {
+  res.json({ success: true, role: 'ADMIN', user: req.user });
 });
 
 // 1. Get all users

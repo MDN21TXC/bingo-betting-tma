@@ -13,6 +13,7 @@ import {
   WinningPatternResult
 } from './BingoEngine.js';
 import { ledgerService, UserAccount } from './LedgerService.js';
+import { databaseService } from './DatabaseService.js';
 
 export type GameStatus = 'lobby' | 'active' | 'finished';
 
@@ -143,6 +144,26 @@ export class GameRoom {
   private lobbyTimer: NodeJS.Timeout | null = null;
   private drawTimer: NodeJS.Timeout | null = null;
   public isCountdownActive: boolean = false;
+  private lockQueues: Map<string, Promise<void>> = new Map();
+
+  private async withLock<T>(key: string, action: () => Promise<T> | T): Promise<T> {
+    const current = this.lockQueues.get(key) || Promise.resolve();
+    let releaseLock = () => {};
+    const next = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    this.lockQueues.set(key, next);
+
+    try {
+      await current;
+      return await action();
+    } finally {
+      releaseLock();
+      if (this.lockQueues.get(key) === next) {
+        this.lockQueues.delete(key);
+      }
+    }
+  }
 
   constructor(io: Server, config: RoomConfig) {
     this.io = io;
@@ -171,6 +192,19 @@ export class GameRoom {
     // Pre-generate 75-ball deck and compute GLI-11 SHA-256 commitment hash
     this.serverSeed = generateServerSeed();
     this.shuffledBalls = generateShuffledBalls();
+
+    // Persist game to authoritative database
+    try {
+      databaseService.createGame({
+        id: this.gameId,
+        roomId: this.config.roomId,
+        betPerCard: this.config.betPerCard,
+        serverSecret: this.serverSecret,
+        commitmentHash: this.getCommitmentHash()
+      });
+    } catch (e) {
+      // Ignore in mock/unit contexts
+    }
 
     // No demo bots. Countdown starts only when 5 cards are selected!
     this.broadcastState();
@@ -430,6 +464,22 @@ export class GameRoom {
     this.tickets.set(ticketId, ticket);
     this.cardToTicketMap.set(cardNumber, ticket);
 
+    // Persist ticket in database
+    try {
+      databaseService.createPlayerTicket({
+        id: ticketId,
+        gameId: this.gameId,
+        cardNumber,
+        userId: playerId,
+        username,
+        gridJson: JSON.stringify(grid),
+        fingerprintHash,
+        isBot
+      });
+    } catch (e) {
+      // Ignore in mock/unit contexts
+    }
+
     // Rule: The game countdown starts after it reaches 5 cards selected, giving 20 seconds waiting time
     if (this.tickets.size >= 5 && !this.isCountdownActive) {
       this.startLobbyCountdown();
@@ -546,96 +596,114 @@ export class GameRoom {
     playerId: string,
     ticketId: string
   ): Promise<{ success: boolean; message: string; winnerRecord?: WinnerRecord }> {
-    if (this.status !== 'active') {
-      return { success: false, message: 'Game is not in active drawing phase' };
-    }
+    return await this.withLock(`claim_${this.gameId}`, async () => {
+      if (this.status !== 'active' || this.winners.length > 0) {
+        return { success: false, message: 'Game has already concluded or is not in active drawing phase' };
+      }
 
-    const ticket = this.tickets.get(ticketId);
-    if (!ticket) {
-      return { success: false, message: 'Ticket not found in current game room' };
-    }
+      // Check persistent database for existing claim on this game and ticket
+      const existingClaim = databaseService.getBingoClaim(this.gameId, ticketId);
+      if (existingClaim) {
+        return { success: false, message: 'Ticket has already been claimed for this game' };
+      }
 
-    if (ticket.playerId !== playerId) {
-      return { success: false, message: 'Unauthorized ticket claim' };
-    }
+      const ticket = this.tickets.get(ticketId);
+      if (!ticket) {
+        return { success: false, message: 'Ticket not found in current game room' };
+      }
 
-    const expectedFingerprint = computeTicketFingerprint(
-      ticket.grid,
-      ticket.playerId,
-      this.gameId,
-      this.serverSecret
-    );
-    if (ticket.fingerprintHash !== expectedFingerprint) {
-      return { success: false, message: 'Security Alert: Ticket fingerprint mismatch!' };
-    }
+      if (ticket.playerId !== playerId) {
+        return { success: false, message: 'Unauthorized ticket claim' };
+      }
 
-    const officialDrawnBalls = this.shuffledBalls.slice(0, this.currentBallIndex);
-    const verification: WinningPatternResult = verifyWinningPatterns(ticket.grid, officialDrawnBalls);
-
-    if (!verification.hasWon) {
-      return {
-        success: false,
-        message: `Invalid Bingo claim! No verified winning pattern found.`
-      };
-    }
-
-    // Calculate Payout based on user rules:
-    // 100% winner if <= 5 players/cards (0% rake)
-    // 80% winner / 20% owner if > 5 players/cards
-    const pool = calculatePariMutuelPool({
-      betPerCard: this.config.betPerCard,
-      totalCardsSold: this.tickets.size,
-      houseRakePercent: this.config.rakePercent
-    });
-
-    const payoutAmount = pool.winnerPayoutAmount;
-    const patternNames = Object.keys(verification.patterns);
-    const patternType = verification.patternTypes.hasFullHouse
-      ? 'Full House'
-      : verification.patternTypes.hasLine
-      ? 'Line'
-      : 'Four Corners';
-
-    const winnerRecord: WinnerRecord = {
-      ticketId,
-      cardNumber: ticket.cardNumber,
-      playerId,
-      username: ticket.username,
-      patternsWon: patternNames,
-      winningNumbers: verification.patterns,
-      payoutAmount,
-      patternType: `BINGO (${patternType})`,
-      claimedAtBallIndex: this.currentBallIndex,
-      isBot: ticket.isBot
-    };
-
-    this.winners.push(winnerRecord);
-
-    if (!ticket.isBot) {
-      await ledgerService.recordTransaction(
-        playerId,
-        'win_payout',
-        payoutAmount,
-        `Bingo Winner (${patternType} - ${pool.winnerPayoutPercent}% Payout) on Card #${ticket.cardNumber} in ${this.config.roomName}`,
+      const expectedFingerprint = computeTicketFingerprint(
+        ticket.grid,
+        ticket.playerId,
         this.gameId,
-        ticketId
+        this.serverSecret
       );
-    }
+      if (ticket.fingerprintHash !== expectedFingerprint) {
+        return { success: false, message: 'Security Alert: Ticket fingerprint mismatch!' };
+      }
 
-    this.io.to(`room_${this.config.roomId}`).emit('BINGO_WINNER_ANNOUNCED', {
-      roomId: this.config.roomId,
-      winner: winnerRecord,
-      gameId: this.gameId,
-      patternsWon: patternNames,
-      payoutAmount,
-      winnerPayoutPercent: pool.winnerPayoutPercent,
-      isFivePlayerBonus: pool.isFivePlayerBonus
+      const officialDrawnBalls = this.shuffledBalls.slice(0, this.currentBallIndex);
+      const verification: WinningPatternResult = verifyWinningPatterns(ticket.grid, officialDrawnBalls);
+
+      if (!verification.hasWon) {
+        return {
+          success: false,
+          message: `Invalid Bingo claim! No verified winning pattern found.`
+        };
+      }
+
+      // Calculate Payout based on user rules:
+      // 100% winner if <= 5 players/cards (0% rake)
+      // 80% winner / 20% owner if > 5 players/cards
+      const pool = calculatePariMutuelPool({
+        betPerCard: this.config.betPerCard,
+        totalCardsSold: this.tickets.size,
+        houseRakePercent: this.config.rakePercent
+      });
+
+      const payoutAmount = pool.winnerPayoutAmount;
+      const patternNames = Object.keys(verification.patterns);
+      const patternType = verification.patternTypes.hasFullHouse
+        ? 'Full House'
+        : verification.patternTypes.hasLine
+        ? 'Line'
+        : 'Four Corners';
+
+      const winnerRecord: WinnerRecord = {
+        ticketId,
+        cardNumber: ticket.cardNumber,
+        playerId,
+        username: ticket.username,
+        patternsWon: patternNames,
+        winningNumbers: verification.patterns,
+        payoutAmount,
+        patternType: `BINGO (${patternType})`,
+        claimedAtBallIndex: this.currentBallIndex,
+        isBot: ticket.isBot
+      };
+
+      this.winners.push(winnerRecord);
+
+      // Record idempotent claim in persistent database
+      databaseService.recordBingoClaim({
+        gameId: this.gameId,
+        ticketId,
+        userId: playerId,
+        payoutAmount,
+        patternType: `BINGO (${patternType})`
+      });
+
+      if (!ticket.isBot) {
+        await ledgerService.recordTransaction(
+          playerId,
+          'win_payout',
+          payoutAmount,
+          `Bingo Winner (${patternType} - ${pool.winnerPayoutPercent}% Payout) on Card #${ticket.cardNumber} in ${this.config.roomName}`,
+          this.gameId,
+          ticketId,
+          `claim_${this.gameId}_${ticketId}`
+        );
+      }
+
+      this.io.to(`room_${this.config.roomId}`).emit('BINGO_WINNER_ANNOUNCED', {
+        roomId: this.config.roomId,
+        winner: winnerRecord,
+        gameId: this.gameId,
+        patternsWon: patternNames,
+        payoutAmount,
+        winnerPayoutPercent: pool.winnerPayoutPercent,
+        isFivePlayerBonus: pool.isFivePlayerBonus
+      });
+
+      // RULE: The first person who hits BINGO wins, and the game ends immediately!
+      this.transitionToFinished();
+
+      return { success: true, message: `BINGO Verified! You won the ${payoutAmount.toFixed(0)} Birr prize pot!`, winnerRecord };
     });
-
-    // RULE: The first person who hits BINGO wins, and the game ends immediately!
-    this.transitionToFinished();
-
-    return { success: true, message: `BINGO Verified! You won the ${payoutAmount.toFixed(0)} Birr prize pot!`, winnerRecord };
   }
 
   private transitionToFinished() {

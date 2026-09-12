@@ -1,7 +1,18 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { authService } from './AuthService.js';
+import { databaseService } from './DatabaseService.js';
 
 describe('AuthService Suite', () => {
+  beforeAll(() => {
+    databaseService.createUser({
+      id: 'usr_demo_kaleb',
+      telegram_id: '12345678',
+      username: 'Kaleb Tadesse',
+      phone: '0912345678',
+      referral_code: 'KALEB123',
+      role: 'USER'
+    });
+  });
   it('should authenticate the seeded demo user (0912345678 / password123)', () => {
     const res = authService.login('0912345678', 'password123');
     expect(res.success).toBe(true);

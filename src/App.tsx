@@ -187,25 +187,9 @@ export default function App() {
     setActiveModal('wallet');
   };
 
-  // Initialize Telegram & User Profile Session
+  // Initialize Telegram SDK & Lobby Rooms
   useEffect(() => {
     telegramSdk.init();
-    const token = localStorage.getItem('bingo_auth_token');
-
-    if (token) {
-      fetch('/api/auth/me', {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data) => {
-          if (data && data.user) {
-            setUser(data.user);
-          } else {
-            localStorage.removeItem('bingo_auth_token');
-          }
-        })
-        .catch(console.error);
-    }
 
     fetch('/api/rooms')
       .then((res) => res.json())
@@ -215,11 +199,19 @@ export default function App() {
       .catch(console.error);
   }, []);
 
+  // Synchronize WebSocket connection token when sessionToken updates
+  useEffect(() => {
+    if (socketRef.current) {
+      socketRef.current.auth = { token: auth.sessionToken || undefined };
+      socketRef.current.disconnect().connect();
+    }
+  }, [auth.sessionToken]);
+
   // Initialize WebSocket Connection with Authenticated Session Token
   useEffect(() => {
     const token = auth.sessionToken || localStorage.getItem('bingo_auth_token');
     const s = io(window.location.origin, {
-      auth: { token },
+      auth: { token: token || undefined },
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionDelay: 1000,
@@ -231,7 +223,7 @@ export default function App() {
     s.on('connect', () => {
       console.log('Connected to Bingo Multi-Room Server');
       if (activeRoomIdRef.current) {
-        s.emit('JOIN_ROOM', { roomId: activeRoomIdRef.current, playerId: userRef.current?.playerId || 'usr_guest' });
+        s.emit('JOIN_ROOM', { roomId: activeRoomIdRef.current });
       }
     });
 
@@ -338,10 +330,9 @@ export default function App() {
     s.on('BINGO_WINNER_ANNOUNCED', (data: { winner: WinnerRecord; payoutAmount: number }) => {
       setRecentWinAnnouncement(data.winner);
 
-      const profile = telegramSdk.getUserProfile();
+      // STRICT USER ISOLATION: Derive winner match ONLY from authenticated user
       const isMe = Boolean(
-        (userRef.current && data.winner.playerId === userRef.current.playerId) ||
-        (profile.id && String(data.winner.playerId) === String(profile.id))
+        userRef.current && data.winner.playerId === userRef.current.playerId
       );
 
       if (isMe) {
@@ -354,7 +345,7 @@ export default function App() {
         });
         // Sync user wallet balance immediately
         if (userRef.current) {
-          const t = localStorage.getItem('bingo_auth_token');
+          const t = auth.sessionToken || localStorage.getItem('bingo_auth_token');
           fetch(`/api/user/${userRef.current.playerId}`, {
             headers: t ? { Authorization: `Bearer ${t}` } : {}
           })
@@ -376,10 +367,9 @@ export default function App() {
     });
 
     s.on('GAME_FINISHED', (data: { roomId: string; gameId: string; winners: WinnerRecord[]; serverSeedRevealed?: string; fullShuffledBallsRevealed?: number[] }) => {
-      const profile = telegramSdk.getUserProfile();
-      const didIWin = data.winners.some((w) =>
-        (userRef.current && w.playerId === userRef.current.playerId) ||
-        (profile.id && String(w.playerId) === String(profile.id))
+      // STRICT USER ISOLATION: Check only authenticated user
+      const didIWin = Boolean(
+        userRef.current && data.winners.some((w) => w.playerId === userRef.current?.playerId)
       );
 
       if (didIWin) {
@@ -500,8 +490,6 @@ export default function App() {
 
     socket.emit('SELECT_CARD_NUMBER', {
       roomId: activeRoomId,
-      playerId: user.playerId,
-      username: user.username,
       cardNumber
     }, (res: any) => {
       if (res.success) {
@@ -543,8 +531,6 @@ export default function App() {
 
     socket.emit('LOCK_MULTIPLE_CARDS', {
       roomId: activeRoomId,
-      playerId: user.playerId,
-      username: user.username,
       cardNumbers: uncommittedCards
     }, (res: any) => {
       if (res.success) {
@@ -565,7 +551,6 @@ export default function App() {
 
     socket.emit('DESELECT_CARD_NUMBER', {
       roomId: activeRoomId,
-      playerId: user.playerId,
       cardNumber
     }, (res: any) => {
       if (res.success) {
@@ -597,8 +582,6 @@ export default function App() {
 
     socket.emit('RANDOM_SELECT_CARDS', {
       roomId: activeRoomId,
-      playerId: user.playerId,
-      username: user.username,
       count
     }, (res: any) => {
       if (res.success) {
@@ -638,7 +621,6 @@ export default function App() {
 
     socket.emit('CLAIM_BINGO', {
       roomId: activeRoomId,
-      playerId: user.playerId,
       ticketId
     }, (res: any) => {
       setClaimingTicketId(null);

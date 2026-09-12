@@ -1,0 +1,201 @@
+-- ====================================================================
+-- Bingo Telegram Mini App - Relational Database Schema
+-- Compatible with SQLite (native Node.js 24) and PostgreSQL
+-- ====================================================================
+
+-- 1. Users table (Central authoritative player identity)
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    telegram_id TEXT NOT NULL UNIQUE,
+    telegram_username TEXT,
+    first_name TEXT,
+    last_name TEXT,
+    username TEXT NOT NULL UNIQUE,
+    phone TEXT,
+    password_hash TEXT,
+    password_salt TEXT,
+    referral_code TEXT NOT NULL UNIQUE,
+    referred_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    role TEXT NOT NULL DEFAULT 'USER' CHECK(role IN ('USER', 'ADMIN')),
+    account_status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(account_status IN ('ACTIVE', 'SUSPENDED', 'BANNED')),
+    registration_status TEXT NOT NULL DEFAULT 'COMPLETED' CHECK(registration_status IN ('PENDING', 'COMPLETED')),
+    avatar_url TEXT,
+    is_bot INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_login_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id);
+CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE INDEX IF NOT EXISTS idx_users_referral_code ON users(referral_code);
+
+-- 2. Telegram Accounts table (Immutable external identity linkage)
+CREATE TABLE IF NOT EXISTS telegram_accounts (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    telegram_id TEXT NOT NULL UNIQUE,
+    first_name TEXT,
+    last_name TEXT,
+    username TEXT,
+    photo_url TEXT,
+    auth_date INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_telegram_accounts_user ON telegram_accounts(user_id);
+
+-- 3. Sessions table (Persistent and secure session tokens)
+CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    telegram_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    last_used_at INTEGER NOT NULL,
+    revoked_at INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_telegram_id ON sessions(telegram_id);
+
+-- 4. Wallets table (Server-authoritative balance and reserved holds)
+CREATE TABLE IF NOT EXISTS wallets (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    balance REAL NOT NULL DEFAULT 0.0 CHECK(balance >= 0.0),
+    reserved_balance REAL NOT NULL DEFAULT 0.0 CHECK(reserved_balance >= 0.0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+-- 5. Financial Ledger Transactions table (Immutable double-entry transaction record)
+CREATE TABLE IF NOT EXISTS ledger_transactions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    username TEXT NOT NULL,
+    type TEXT NOT NULL CHECK(type IN ('DEPOSIT', 'BET', 'WIN_PAYOUT', 'WITHDRAWAL', 'REFUND', 'BONUS', 'LOSS', 'ADMIN_ADJUSTMENT')),
+    amount REAL NOT NULL,
+    balance_before REAL NOT NULL,
+    balance_after REAL NOT NULL,
+    game_id TEXT,
+    ticket_id TEXT,
+    reference_id TEXT UNIQUE,
+    description TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ledger_user_id ON ledger_transactions(user_id);
+CREATE INDEX IF NOT EXISTS idx_ledger_type ON ledger_transactions(type);
+CREATE INDEX IF NOT EXISTS idx_ledger_reference ON ledger_transactions(reference_id);
+
+-- 6. Deposit Requests table (Strict administrative approval workflow)
+CREATE TABLE IF NOT EXISTS deposit_requests (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    username TEXT NOT NULL,
+    amount REAL NOT NULL CHECK(amount > 0),
+    payment_method TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'APPROVED', 'REJECTED')),
+    reference_id TEXT,
+    created_at TEXT NOT NULL,
+    processed_at TEXT,
+    processed_by TEXT,
+    rejection_reason TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_deposits_user ON deposit_requests(user_id);
+CREATE INDEX IF NOT EXISTS idx_deposits_status ON deposit_requests(status);
+
+-- 7. Withdrawal Requests table (Balance reservation and approval workflow)
+CREATE TABLE IF NOT EXISTS withdrawal_requests (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    username TEXT NOT NULL,
+    amount REAL NOT NULL CHECK(amount > 0),
+    address TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'APPROVED', 'REJECTED', 'PROCESSING', 'COMPLETED', 'FAILED')),
+    reference_id TEXT,
+    created_at TEXT NOT NULL,
+    processed_at TEXT,
+    processed_by TEXT,
+    rejection_reason TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_withdrawals_user ON withdrawal_requests(user_id);
+CREATE INDEX IF NOT EXISTS idx_withdrawals_status ON withdrawal_requests(status);
+
+-- 8. Games table (Shared bingo game sessions)
+CREATE TABLE IF NOT EXISTS games (
+    id TEXT PRIMARY KEY,
+    room_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('lobby', 'active', 'finished')),
+    bet_per_card REAL NOT NULL,
+    server_secret TEXT NOT NULL,
+    commitment_hash TEXT NOT NULL,
+    total_cards_sold INTEGER NOT NULL DEFAULT 0,
+    prize_pool REAL NOT NULL DEFAULT 0.0,
+    created_at TEXT NOT NULL,
+    finished_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_games_room_id ON games(room_id);
+
+-- 9. Game Rounds (Drawn balls per game)
+CREATE TABLE IF NOT EXISTS game_rounds (
+    id TEXT PRIMARY KEY,
+    game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    ball_index INTEGER NOT NULL,
+    ball_number INTEGER NOT NULL,
+    ball_letter TEXT NOT NULL,
+    drawn_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_game_rounds_game ON game_rounds(game_id);
+
+-- 10. Player Tickets table
+CREATE TABLE IF NOT EXISTS player_tickets (
+    id TEXT PRIMARY KEY,
+    game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    card_number INTEGER NOT NULL,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    username TEXT NOT NULL,
+    grid_json TEXT NOT NULL,
+    fingerprint_hash TEXT NOT NULL,
+    is_bot INTEGER NOT NULL DEFAULT 0,
+    purchased_at TEXT NOT NULL,
+    UNIQUE(game_id, card_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_player_tickets_user ON player_tickets(user_id);
+CREATE INDEX IF NOT EXISTS idx_player_tickets_game ON player_tickets(game_id);
+
+-- 11. Bingo Claims table (Idempotent single payout enforcement)
+CREATE TABLE IF NOT EXISTS bingo_claims (
+    id TEXT PRIMARY KEY,
+    game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    ticket_id TEXT NOT NULL REFERENCES player_tickets(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    payout_amount REAL NOT NULL,
+    pattern_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'VERIFIED',
+    claimed_at TEXT NOT NULL,
+    UNIQUE(game_id, ticket_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_bingo_claims_game ON bingo_claims(game_id);
+CREATE INDEX IF NOT EXISTS idx_bingo_claims_ticket ON bingo_claims(ticket_id);
+
+-- 12. Admin Audit Logs table (Immutable security compliance log)
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id TEXT PRIMARY KEY,
+    admin_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    action TEXT NOT NULL,
+    target_user_id TEXT,
+    target_record_id TEXT,
+    metadata_json TEXT,
+    timestamp TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_admin ON audit_logs(admin_user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_logs(target_user_id);

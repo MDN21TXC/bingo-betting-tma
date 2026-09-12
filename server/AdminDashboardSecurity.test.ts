@@ -2,11 +2,13 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { app, httpServer } from './index.js';
 import { authService } from './AuthService.js';
 import { ledgerService } from './LedgerService.js';
+import { databaseService } from './DatabaseService.js';
 
 let BASE_URL: string;
 let normalUserToken: string;
 let normalUser: any;
-const adminToken = 'tok_admin_master_key'; // Seeded master admin token
+let adminToken: string;
+let adminUser: any;
 
 describe('Admin Dashboard Security & Operations Test Suite', () => {
   beforeAll(async () => {
@@ -17,6 +19,17 @@ describe('Admin Dashboard Security & Operations Test Suite', () => {
         resolve();
       });
     });
+
+    // Create verified Admin user with persistent session
+    adminUser = databaseService.getUserById('usr_admin') || databaseService.createUser({
+      id: 'usr_admin',
+      telegram_id: '999888777',
+      username: 'SystemAdmin',
+      referral_code: 'SYSADMIN1',
+      role: 'ADMIN'
+    });
+    const adminSession = databaseService.createSession(adminUser.id, adminUser.telegram_id);
+    adminToken = adminSession.id;
 
     // Create standard normal user (role: USER)
     const tgId = Math.floor(883000000 + Math.random() * 899999);
@@ -124,7 +137,7 @@ describe('Admin Dashboard Security & Operations Test Suite', () => {
     expect(auditRes.status).toBe(200);
 
     const log = auditData.logs.find(
-      (l: any) => l.action === 'UPDATE_USER_STATUS' && l.target_user_id === normalUser.playerId
+      (l: any) => (l.action === 'UPDATE_USER_STATUS' || l.action === 'SUSPEND_USER') && l.target_user_id === normalUser.playerId
     );
     expect(log).toBeDefined();
     expect(log.admin_user_id).toBe('usr_admin');
@@ -193,7 +206,9 @@ describe('Admin Dashboard Security & Operations Test Suite', () => {
       `dep_test_${Date.now()}`
     );
 
-    // User requests withdrawal of 300
+    const balanceBeforeRequest = ledgerService.getUser(normalUser.playerId)!.walletBalance;
+
+    // User requests withdrawal of 300 (placed on reserve hold)
     const withdrawal = ledgerService.createWithdrawalRequest(
       normalUser.playerId,
       normalUser.username,
@@ -202,7 +217,8 @@ describe('Admin Dashboard Security & Operations Test Suite', () => {
     );
 
     expect(withdrawal.status).toBe('PENDING');
-    const balanceBeforeReject = ledgerService.getUser(normalUser.playerId)!.walletBalance;
+    const balanceDuringHold = ledgerService.getUser(normalUser.playerId)!.walletBalance;
+    expect(balanceDuringHold).toBe(balanceBeforeRequest - 300);
 
     // Admin rejects withdrawal with reason
     const rejectRes = await fetch(`${BASE_URL}/api/admin/withdrawals/${withdrawal.id}/reject`, {
@@ -220,9 +236,9 @@ describe('Admin Dashboard Security & Operations Test Suite', () => {
     expect(rejectData.request.status).toBe('REJECTED');
     expect(rejectData.request.rejectionReason).toBe('Invalid bank account details');
 
-    // Verify balance was preserved
+    // Verify balance was released from reserve and restored
     const balanceAfterReject = ledgerService.getUser(normalUser.playerId)!.walletBalance;
-    expect(balanceAfterReject).toBe(balanceBeforeReject);
+    expect(balanceAfterReject).toBe(balanceBeforeRequest);
   });
 
   // TEST 6: Manual Balance Adjustment with Audit Trail

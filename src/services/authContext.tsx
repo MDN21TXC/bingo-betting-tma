@@ -206,6 +206,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.error('Logout error:', err);
       }
       localStorage.removeItem('bingo_auth_token');
+      localStorage.removeItem('bingo_player_id');
+      localStorage.removeItem('bingo_username');
     }
     setUser(null);
     setSessionToken(null);

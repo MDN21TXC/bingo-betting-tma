@@ -3,21 +3,26 @@ import { io as ClientSocket, Socket as ClientSocketType } from 'socket.io-client
 import { httpServer, app, multiRoomManager } from './index.js';
 import { authService } from './AuthService.js';
 import { ledgerService } from './LedgerService.js';
-import type { Server } from 'http';
+import { databaseService } from './DatabaseService.js';
 
 const TEST_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || 'test_mock_bot_token_123456:ABCdefGHIjklMNOpqrSTUvwxYZ';
 let serverPort: number;
 let BASE_URL: string;
 
-describe('Multi-User State & Identity Isolation Test Suite', () => {
+describe('Multi-User Security & Player Isolation Test Suite (Requirements 17 & 18)', () => {
   let socketA: ClientSocketType;
   let socketB: ClientSocketType;
+  let tgIdA: number;
+  let tgIdB: number;
+  let initDataA: string;
+  let initDataB: string;
   let userA: any;
   let userB: any;
   let tokenA: string;
   let tokenB: string;
 
   beforeAll(async () => {
+    // Start test HTTP server
     await new Promise<void>((resolve) => {
       httpServer.listen(0, '127.0.0.1', () => {
         const addr = httpServer.address() as any;
@@ -27,39 +32,21 @@ describe('Multi-User State & Identity Isolation Test Suite', () => {
       });
     });
 
-    // 1. Register User A with unique Telegram ID
-    const tgIdA = Math.floor(771000000 + Math.random() * 899999);
-    const initDataA = authService.createSignedTelegramInitData(
+    // Reset database for clean isolation testing
+    databaseService.resetDatabase();
+
+    // Prepare distinct Telegram accounts
+    tgIdA = Math.floor(771000000 + Math.random() * 899999);
+    initDataA = authService.createSignedTelegramInitData(
       { id: tgIdA, first_name: 'PlayerAlpha', username: `alpha_${tgIdA}` },
       TEST_BOT_TOKEN
     );
-    const authResA = await authService.authenticateTelegram(initDataA);
-    const regResA = await authService.completeRegistration(
-      authResA.tempToken!,
-      `AlphaUser_${tgIdA.toString().slice(-4)}`
-    );
-    expect(regResA.success).toBe(true);
-    userA = regResA.user;
-    tokenA = regResA.sessionToken!;
 
-    // 2. Register User B with completely different Telegram ID
-    const tgIdB = Math.floor(772000000 + Math.random() * 899999);
-    const initDataB = authService.createSignedTelegramInitData(
+    tgIdB = Math.floor(772000000 + Math.random() * 899999);
+    initDataB = authService.createSignedTelegramInitData(
       { id: tgIdB, first_name: 'PlayerBeta', username: `beta_${tgIdB}` },
       TEST_BOT_TOKEN
     );
-    const authResB = await authService.authenticateTelegram(initDataB);
-    const regResB = await authService.completeRegistration(
-      authResB.tempToken!,
-      `BetaUser_${tgIdB.toString().slice(-4)}`
-    );
-    expect(regResB.success).toBe(true);
-    userB = regResB.user;
-    tokenB = regResB.sessionToken!;
-
-    // Credit both users with initial test balance
-    await ledgerService.recordTransaction(userA.playerId, 'deposit', 500, 'Initial test balance A');
-    await ledgerService.recordTransaction(userB.playerId, 'deposit', 500, 'Initial test balance B');
   });
 
   afterAll(async () => {
@@ -68,87 +55,111 @@ describe('Multi-User State & Identity Isolation Test Suite', () => {
     await new Promise<void>((resolve) => httpServer.close(() => resolve()));
   });
 
-  // TEST 1: Identity Resolution - Two Telegram IDs MUST produce distinct internal IDs
-  it('1. TRACE USER IDENTITY: Telegram Account A & B produce strictly distinct internal users', async () => {
-    expect(userA.playerId).toBeDefined();
-    expect(userB.playerId).toBeDefined();
+  // TEST 1: Telegram A authenticates.
+  // Verify: telegram_id = A, playerId = A (tg_A), session.user_id = A
+  it('TEST 1: Telegram A authenticates and maps to authoritative internal user A', async () => {
+    const authResA = await authService.authenticateTelegram(initDataA);
+    expect(authResA.success).toBe(true);
+
+    const regResA = await authService.completeRegistration(
+      authResA.tempToken!,
+      `AlphaUser_${tgIdA.toString().slice(-4)}`
+    );
+    expect(regResA.success).toBe(true);
+    userA = regResA.user;
+    tokenA = regResA.sessionToken!;
+
+    expect(userA.telegram_id).toBe(String(tgIdA));
+    expect(userA.playerId).toBe(`tg_${tgIdA}`);
+
+    // Verify in database that session belongs to user A
+    const rawSessionA = databaseService.getSession(tokenA);
+    expect(rawSessionA).toBeDefined();
+    expect(rawSessionA?.user_id).toBe(userA.playerId);
+    expect(rawSessionA?.telegram_id).toBe(String(tgIdA));
+
+    // Seed wallet balance for user A
+    databaseService.updateWalletBalance(userA.playerId, 500);
+  });
+
+  // TEST 2: Telegram B authenticates.
+  // Verify: telegram_id = B, playerId = B (tg_B), session.user_id = B
+  it('TEST 2: Telegram B authenticates and maps to authoritative internal user B', async () => {
+    const authResB = await authService.authenticateTelegram(initDataB);
+    expect(authResB.success).toBe(true);
+
+    const regResB = await authService.completeRegistration(
+      authResB.tempToken!,
+      `BetaUser_${tgIdB.toString().slice(-4)}`
+    );
+    expect(regResB.success).toBe(true);
+    userB = regResB.user;
+    tokenB = regResB.sessionToken!;
+
+    expect(userB.telegram_id).toBe(String(tgIdB));
+    expect(userB.playerId).toBe(`tg_${tgIdB}`);
+
+    // Verify in database that session belongs to user B
+    const rawSessionB = databaseService.getSession(tokenB);
+    expect(rawSessionB).toBeDefined();
+    expect(rawSessionB?.user_id).toBe(userB.playerId);
+    expect(rawSessionB?.telegram_id).toBe(String(tgIdB));
+
+    // Seed wallet balance for user B
+    databaseService.updateWalletBalance(userB.playerId, 500);
+  });
+
+  // TEST 3: A and B must have different internal user IDs.
+  it('TEST 3: A and B must have strictly distinct internal user IDs and sessions', () => {
     expect(userA.playerId).not.toBe(userB.playerId);
     expect(userA.telegram_id).not.toBe(userB.telegram_id);
+    expect(tokenA).not.toBe(tokenB);
 
-    // Verify verifying sessions through AuthService
-    const sessionA = authService.getUserByToken(tokenA);
-    const sessionB = authService.getUserByToken(tokenB);
-    expect(sessionA?.playerId).toBe(userA.playerId);
-    expect(sessionB?.playerId).toBe(userB.playerId);
-    expect(sessionA?.playerId).not.toBe(sessionB?.playerId);
+    const dbUserA = databaseService.getUserById(userA.playerId);
+    const dbUserB = databaseService.getUserById(userB.playerId);
+    expect(dbUserA?.id).not.toBe(dbUserB?.id);
+    expect(dbUserA?.telegram_id).not.toBe(dbUserB?.telegram_id);
+  });
 
-    // /api/auth/me returns each user's own identity based strictly on Bearer token
-    const resA = await fetch(`${BASE_URL}/api/auth/me`, {
+  // TEST 4: A cannot read B's balance.
+  it('TEST 4: A cannot read B\'s balance (IDOR rejected with 403 Forbidden)', async () => {
+    const res = await fetch(`${BASE_URL}/api/user/${userB.playerId}`, {
       headers: { Authorization: `Bearer ${tokenA}` }
     });
-    const dataA = await resA.json();
-    expect(dataA.user.playerId).toBe(userA.playerId);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toMatch(/access denied: cannot access another user's balance/i);
 
-    const resB = await fetch(`${BASE_URL}/api/auth/me`, {
-      headers: { Authorization: `Bearer ${tokenB}` }
+    // User A reading own balance succeeds
+    const ownRes = await fetch(`${BASE_URL}/api/user/${userA.playerId}`, {
+      headers: { Authorization: `Bearer ${tokenA}` }
     });
-    const dataB = await resB.json();
-    expect(dataB.user.playerId).toBe(userB.playerId);
+    expect(ownRes.status).toBe(200);
+    const ownData = await ownRes.json();
+    expect(ownData.user.playerId).toBe(userA.playerId);
   });
 
-  // TEST 2: Wallet and Balance isolation - Financial operations resolve strictly from session
-  it('2. BALANCE IS USER-SCOPED: User cannot manipulate another user balance by spoofing playerId', async () => {
-    const balBeforeA = authService.getUserByToken(tokenA)!.walletBalance;
-    const balBeforeB = authService.getUserByToken(tokenB)!.walletBalance;
-
-    // Attempt deposit using User A's token but passing User B's playerId in body
-    const spoofDepositRes = await fetch(`${BASE_URL}/api/wallet/deposit`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${tokenA}`
-      },
-      body: JSON.stringify({
-        playerId: userB.playerId, // Malicious spoof
-        amount: 150,
-        provider: 'telebirr'
-      })
+  // TEST 5: A cannot read B's transactions.
+  it('TEST 5: A cannot read B\'s transaction ledger (IDOR rejected with 403 Forbidden)', async () => {
+    const res = await fetch(`${BASE_URL}/api/ledger/${userB.playerId}`, {
+      headers: { Authorization: `Bearer ${tokenA}` }
     });
-    expect(spoofDepositRes.status).toBe(403);
-    const spoofData = await spoofDepositRes.json();
-    expect(spoofData.error).toMatch(/access denied/i);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toMatch(/access denied: cannot access another user's ledger/i);
 
-    // User A and User B balances are completely unchanged
-    expect(authService.getUserByToken(tokenA)!.walletBalance).toBe(balBeforeA);
-    expect(authService.getUserByToken(tokenB)!.walletBalance).toBe(balBeforeB);
-
-    // Legitimate deposit for User A
-    const legitRes = await fetch(`${BASE_URL}/api/wallet/deposit`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${tokenA}`
-      },
-      body: JSON.stringify({
-        amount: 150,
-        provider: 'telebirr'
-      })
+    // User A reading own ledger succeeds
+    const ownRes = await fetch(`${BASE_URL}/api/ledger/${userA.playerId}`, {
+      headers: { Authorization: `Bearer ${tokenA}` }
     });
-    expect(legitRes.status).toBe(200);
-    const legitData = await legitRes.json();
-    expect(legitData.user.playerId).toBe(userA.playerId);
-    expect(legitData.user.walletBalance).toBe(balBeforeA + 150);
-
-    // User B's balance remains strictly untouched
-    const checkB = await fetch(`${BASE_URL}/api/user/${userB.playerId}`, {
-      headers: { Authorization: `Bearer ${tokenB}` }
-    });
-    const dataB = await checkB.json();
-    expect(dataB.user.walletBalance).toBe(balBeforeB);
+    expect(ownRes.status).toBe(200);
+    const ownData = await ownRes.json();
+    expect(Array.isArray(ownData.entries)).toBe(true);
   });
 
-  // TEST 3: WebSocket Connection Authentication & State Binding
-  it('3. WEBSOCKET SESSION BINDING: Connections are strictly bound to authenticated user', async () => {
+  // TEST 6: A cannot use B's ticket.
+  it('TEST 6: A cannot use or deselect B\'s card/ticket', async () => {
+    // Connect both sockets with their respective session tokens
     socketA = ClientSocket(`http://127.0.0.1:${serverPort}`, {
       auth: { token: tokenA },
       transports: ['websocket']
@@ -163,135 +174,293 @@ describe('Multi-User State & Identity Isolation Test Suite', () => {
       new Promise<void>((resolve) => socketB.on('connect', () => resolve()))
     ]);
 
-    expect(socketA.connected).toBe(true);
-    expect(socketB.connected).toBe(true);
-
     // Both join the same room
-    await new Promise<void>((resolve) => {
-      socketA.emit('JOIN_ROOM', { roomId: 'room_20birr' }, () => resolve());
+    await new Promise<void>((resolve) => socketA.emit('JOIN_ROOM', { roomId: 'room_20birr' }, () => resolve()));
+    await new Promise<void>((resolve) => socketB.emit('JOIN_ROOM', { roomId: 'room_20birr' }, () => resolve()));
+
+    // User B selects card #15
+    const selectResB = await new Promise<any>((resolve) => {
+      socketB.emit('SELECT_CARD_NUMBER', { roomId: 'room_20birr', cardNumber: 15 }, (res: any) => resolve(res));
     });
-    await new Promise<void>((resolve) => {
-      socketB.emit('JOIN_ROOM', { roomId: 'room_20birr' }, () => resolve());
+    expect(selectResB.success).toBe(true);
+
+    // User A attempts to DESELECT card #15 owned by User B
+    const attackDeselect = await new Promise<any>((resolve) => {
+      socketA.emit('DESELECT_CARD_NUMBER', { roomId: 'room_20birr', cardNumber: 15 }, (res: any) => resolve(res));
     });
+    expect(attackDeselect.success).toBe(false);
+    expect(attackDeselect.error).toMatch(/not found or not owned/i);
+
+    // Verify room ticket ownership in memory and database
+    const room = multiRoomManager.getRoom('room_20birr');
+    const ticket15 = Array.from(room!.tickets.values()).find((t: any) => t.cardNumber === 15);
+    expect(ticket15?.playerId).toBe(userB.playerId);
   });
 
-  // TEST 4: Card Selection Isolation - User B cannot touch User A's cards
-  it('4. GAME STATE USER-SCOPED: User A selects card 10; User B cannot deselect it', async () => {
-    // User A selects card 10
+  // TEST 7: A cannot claim B's Bingo.
+  it('TEST 7: A cannot claim B\'s Bingo on ticket owned by B', async () => {
+    const room = multiRoomManager.getRoom('room_20birr')!;
+    const ticketB = Array.from(room.tickets.values()).find((t: any) => t.cardNumber === 15)!;
+    expect(ticketB).toBeDefined();
+
+    // Setup active state with numbers that complete ticket B
+    room.status = 'active';
+    const numbersOnCardB = [
+      ...ticketB.grid.B,
+      ...ticketB.grid.I,
+      ...ticketB.grid.N,
+      ...ticketB.grid.G,
+      ...ticketB.grid.O
+    ].filter((n) => n > 0);
+    (room as any).shuffledBalls = numbersOnCardB;
+    (room as any).currentBallIndex = numbersOnCardB.length;
+
+    // User A attempts to claim Bingo using User B's ticket ID
+    const fraudClaim = await new Promise<any>((resolve) => {
+      socketA.emit('CLAIM_BINGO', { roomId: 'room_20birr', ticketId: ticketB.ticketId }, (res: any) => resolve(res));
+    });
+    expect(fraudClaim.success).toBe(false);
+    expect(fraudClaim.message).toMatch(/unauthorized ticket claim/i);
+
+    // Confirm that User A did NOT receive any win payout
+    const ledgerA = ledgerService.getLedgerForUser(userA.playerId);
+    const winEntryA = ledgerA.find((e) => e.type === 'win_payout');
+    expect(winEntryA).toBeUndefined();
+
+    // Reset room status back to lobby for subsequent game card selections
+    room.status = 'lobby';
+  });
+
+  // TEST 8: A cannot place a bet for B.
+  it('TEST 8: Server ignores client playerId in socket emit; A cannot bet on B\'s behalf', async () => {
+    const balanceBeforeB = databaseService.getOrCreateWallet(userB.playerId).balance;
+
+    // User A emits SELECT_CARD_NUMBER passing malicious { playerId: userB.playerId }
     const selectResA = await new Promise<any>((resolve) => {
       socketA.emit(
         'SELECT_CARD_NUMBER',
-        { roomId: 'room_20birr', cardNumber: 10 },
+        { roomId: 'room_20birr', cardNumber: 30, playerId: userB.playerId, username: userB.username },
         (res: any) => resolve(res)
       );
     });
+
     expect(selectResA.success).toBe(true);
+    // Identity must be derived from socket.data.user (User A), NOT client payload
     expect(selectResA.user.playerId).toBe(userA.playerId);
 
-    // User B attempts to select card 10 (already taken by User A)
-    const selectResB = await new Promise<any>((resolve) => {
-      socketB.emit(
-        'SELECT_CARD_NUMBER',
-        { roomId: 'room_20birr', cardNumber: 10 },
-        (res: any) => resolve(res)
-      );
-    });
-    expect(selectResB.success).toBe(false);
-    expect(selectResB.error).toMatch(/already taken/i);
+    const room = multiRoomManager.getRoom('room_20birr')!;
+    const ticket30 = Array.from(room.tickets.values()).find((t: any) => t.cardNumber === 30);
+    expect(ticket30?.playerId).toBe(userA.playerId);
 
-    // User B attempts to DESELECT User A's card 10 (spoofing or attacking)
-    const deselectAttack = await new Promise<any>((resolve) => {
-      socketB.emit(
-        'DESELECT_CARD_NUMBER',
-        { roomId: 'room_20birr', cardNumber: 10 },
-        (res: any) => resolve(res)
-      );
-    });
-    expect(deselectAttack.success).toBe(false);
-    expect(deselectAttack.error).toMatch(/not found or not owned/i);
-
-    // User B selects card 20 legitimately
-    const selectResB2 = await new Promise<any>((resolve) => {
-      socketB.emit(
-        'SELECT_CARD_NUMBER',
-        { roomId: 'room_20birr', cardNumber: 20 },
-        (res: any) => resolve(res)
-      );
-    });
-    expect(selectResB2.success).toBe(true);
-    expect(selectResB2.user.playerId).toBe(userB.playerId);
-
-    // Verify room tickets maintain exact player ownership
-    const room = multiRoomManager.getRoom('room_20birr');
-    const ticket10 = Array.from(room?.tickets.values() || []).find((t: any) => t.cardNumber === 10);
-    const ticket20 = Array.from(room?.tickets.values() || []).find((t: any) => t.cardNumber === 20);
-
-    expect(ticket10?.playerId).toBe(userA.playerId);
-    expect(ticket20?.playerId).toBe(userB.playerId);
+    // User B's balance was not charged
+    const balanceAfterB = databaseService.getOrCreateWallet(userB.playerId).balance;
+    expect(balanceAfterB).toBe(balanceBeforeB);
   });
 
-  // TEST 5: Winner and Reward Isolation - Claiming and Payouts belong ONLY to the winner
-  it('5. REWARD IS USER-SCOPED: User A winning awards payout ONLY to User A; User B balance is unchanged', async () => {
-    const room = multiRoomManager.getRoom('room_20birr');
-    expect(room).toBeDefined();
+  // TEST 9: A cannot withdraw B's funds.
+  it('TEST 9: A cannot withdraw B\'s funds (rejected with 403 Forbidden)', async () => {
+    const balanceBeforeB = databaseService.getOrCreateWallet(userB.playerId).balance;
 
-    const ticketA = Array.from(room!.tickets.values()).find((t: any) => t.cardNumber === 10);
+    const res = await fetch(`${BASE_URL}/api/wallet/withdraw`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${tokenA}`
+      },
+      body: JSON.stringify({
+        playerId: userB.playerId, // Malicious target
+        amount: 100,
+        address: '0911223344'
+      })
+    });
+
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toMatch(/access denied: cannot perform financial operations on another account/i);
+
+    // User B's balance and reserved balance remain unchanged
+    const walletB = databaseService.getOrCreateWallet(userB.playerId);
+    expect(walletB.balance).toBe(balanceBeforeB);
+    expect(walletB.reserved_balance).toBe(0);
+  });
+
+  // TEST 10: A cannot modify B's account.
+  it('TEST 10: Regular User A cannot modify or ban User B\'s account (admin role enforced)', async () => {
+    const res = await fetch(`${BASE_URL}/api/admin/users/${userB.playerId}/status`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${tokenA}` // Regular user token
+      },
+      body: JSON.stringify({ status: 'BANNED' })
+    });
+
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toMatch(/admin authorization required|admin access required/i);
+
+    // Verify User B remains active in database
+    const dbUserB = databaseService.getUserById(userB.playerId);
+    expect(dbUserB?.account_status).toBe('ACTIVE');
+  });
+
+  // TEST 11: Two simultaneous Bingo claims cannot produce two payouts.
+  it('TEST 11: Two simultaneous Bingo claims for the same ticket cannot produce double payouts', async () => {
+    const room = multiRoomManager.getRoom('room_20birr')!;
+    const ticketA = Array.from(room.tickets.values()).find((t: any) => t.cardNumber === 30)!;
     expect(ticketA).toBeDefined();
 
-    // Simulate drawing all numbers on ticketA to guarantee a winning full house / line
-    const numbersOnCardA: number[] = [
-      ...ticketA!.grid.B,
-      ...ticketA!.grid.I,
-      ...ticketA!.grid.N,
-      ...ticketA!.grid.G,
-      ...ticketA!.grid.O
+    // Prepare winning numbers for ticket A
+    room.status = 'active';
+    const numbersOnCardA = [
+      ...ticketA.grid.B,
+      ...ticketA.grid.I,
+      ...ticketA.grid.N,
+      ...ticketA.grid.G,
+      ...ticketA.grid.O
     ].filter((n) => n > 0);
-
-    room!.status = 'active';
     (room as any).shuffledBalls = numbersOnCardA;
     (room as any).currentBallIndex = numbersOnCardA.length;
 
-    // User B attempts to claim BINGO on User A's ticket
-    const fraudClaim = await new Promise<any>((resolve) => {
-      socketB.emit(
-        'CLAIM_BINGO',
-        { roomId: 'room_20birr', ticketId: ticketA!.ticketId },
-        (res: any) => resolve(res)
-      );
+    // Send two concurrent CLAIM_BINGO requests simultaneously
+    const [claim1, claim2] = await Promise.all([
+      new Promise<any>((resolve) => {
+        socketA.emit('CLAIM_BINGO', { roomId: 'room_20birr', ticketId: ticketA.ticketId }, (res: any) => resolve(res));
+      }),
+      new Promise<any>((resolve) => {
+        socketA.emit('CLAIM_BINGO', { roomId: 'room_20birr', ticketId: ticketA.ticketId }, (res: any) => resolve(res));
+      })
+    ]);
+
+    // Exactly one claim must succeed, and the other must be rejected
+    const successCount = (claim1.success ? 1 : 0) + (claim2.success ? 1 : 0);
+    expect(successCount).toBe(1);
+
+    const failedClaim = claim1.success ? claim2 : claim1;
+    expect(failedClaim.success).toBe(false);
+
+    // In the ledger and database, verify exactly one payout exists for this ticket
+    const ledgerA = ledgerService.getLedgerForUser(userA.playerId);
+    const winEntries = ledgerA.filter((e) => (e.ticketId === ticketA.ticketId || (e as any).ticket_id === ticketA.ticketId) && (e.type === 'win_payout' || (e as any).type === 'WIN_PAYOUT'));
+    expect(winEntries.length).toBe(1);
+
+    const dbClaim = databaseService.getBingoClaim(room.gameId, ticketA.ticketId);
+    expect(dbClaim).toBeDefined();
+    expect(dbClaim?.user_id).toBe(userA.playerId);
+  });
+
+  // TEST 12: Two simultaneous withdrawals cannot spend the same funds.
+  it('TEST 12: Two simultaneous withdrawals cannot double-spend available balance', async () => {
+    // Set user A's balance to exactly 100 ETB, with 0 reserved
+    databaseService.updateWalletBalance(userA.playerId, 100);
+
+    // Fire two simultaneous withdrawal requests for 100 ETB each
+    const [w1, w2] = await Promise.all([
+      fetch(`${BASE_URL}/api/wallet/withdraw`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenA}` },
+        body: JSON.stringify({ amount: 100, address: '0911001122' })
+      }),
+      fetch(`${BASE_URL}/api/wallet/withdraw`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenA}` },
+        body: JSON.stringify({ amount: 100, address: '0911001122' })
+      })
+    ]);
+
+    const status1 = w1.status;
+    const status2 = w2.status;
+
+    // Exactly one succeeds (200) and the other fails due to insufficient balance (400)
+    const successCount = (status1 === 200 ? 1 : 0) + (status2 === 200 ? 1 : 0);
+    expect(successCount).toBe(1);
+
+    const failRes = status1 === 200 ? w2 : w1;
+    expect(failRes.status).toBe(400);
+    const failBody = await failRes.json();
+    expect(failBody.error).toMatch(/insufficient funds|insufficient available balance/i);
+
+    // Check wallet: available balance is 0, reserved is 100
+    const wallet = databaseService.getOrCreateWallet(userA.playerId);
+    expect(wallet.balance).toBe(0);
+    expect(wallet.reserved_balance).toBe(100);
+  });
+
+  // TEST 13: Refreshing the Telegram Mini App preserves the correct Telegram account.
+  it('TEST 13: Refreshing the Telegram Mini App preserves the authoritative Telegram account', async () => {
+    // 1. Validate session via /api/auth/me
+    const meRes = await fetch(`${BASE_URL}/api/auth/me`, {
+      headers: { Authorization: `Bearer ${tokenA}` }
     });
-    expect(fraudClaim.success).toBe(false);
-    expect(fraudClaim.message).toMatch(/unauthorized ticket claim|not belong to player/i);
+    expect(meRes.status).toBe(200);
+    const meData = await meRes.json();
+    expect(meData.user.playerId).toBe(userA.playerId);
+    expect(meData.user.username).toBe(userA.username);
 
-    const balanceBeforeA = (authService.getUserByToken(tokenA))!.walletBalance;
-    const balanceBeforeB = (authService.getUserByToken(tokenB))!.walletBalance;
+    // 2. Re-authenticating with same initData returns the existing user and a valid session
+    const reauth = await authService.authenticateTelegram(initDataA);
+    expect(reauth.success).toBe(true);
+    expect(reauth.status).toBe('AUTHENTICATED');
+    expect(reauth.user!.playerId).toBe(userA.playerId);
+    expect((reauth.user as any).telegram_id).toBe(String(tgIdA));
+  });
 
-    // User A claims legitimate BINGO
-    const legitClaim = await new Promise<any>((resolve) => {
-      socketA.emit(
-        'CLAIM_BINGO',
-        { roomId: 'room_20birr', ticketId: ticketA!.ticketId },
-        (res: any) => resolve(res)
-      );
+  // TEST 14: Switching from Telegram account A to Telegram account B in the same browser/device does not retain A's authenticated application state.
+  it('TEST 14: Switching from account A to B purges stale token and establishes clean account B state', async () => {
+    // Browser had tokenA stored. User switches Telegram accounts to Account B.
+    // Server checks if tokenA matches Telegram ID B:
+    const isMatching = authService.verifySessionMatchesTelegram(tokenA, String(tgIdB));
+    expect(isMatching).toBe(false);
+
+    // Authentic initDataB produces authenticated session B
+    const authB = await authService.authenticateTelegram(initDataB);
+    expect(authB.success).toBe(true);
+    expect(authB.user!.playerId).toBe(userB.playerId);
+    expect(authB.user!.playerId).not.toBe(userA.playerId);
+
+    // Using new tokenB returns strictly user B's wallet and details
+    const profileB = await fetch(`${BASE_URL}/api/auth/me`, {
+      headers: { Authorization: `Bearer ${authB.sessionToken}` }
     });
-    expect(legitClaim.success).toBe(true);
-    expect(legitClaim.user.playerId).toBe(userA.playerId);
-    const payout = legitClaim.winnerRecord.payoutAmount;
-    expect(payout).toBeGreaterThan(0);
-    expect(legitClaim.user.walletBalance).toBe(balanceBeforeA + payout);
+    const profileDataB = await profileB.json();
+    expect(profileDataB.user.playerId).toBe(userB.playerId);
+    expect(profileDataB.user.playerId).not.toBe(userA.playerId);
+  });
 
-    // Verify User B's balance did NOT change
-    const userBAfter = authService.getUserByToken(tokenB);
-    expect(userBAfter?.walletBalance).toBe(balanceBeforeB);
+  // TEST 15: Opening the Mini App simultaneously from Telegram A and Telegram B produces completely independent sessions.
+  it('TEST 15: Simultaneous execution from Telegram A and B maintains 100% independent state across all surfaces', async () => {
+    // Query state of user A
+    const stateA = {
+      telegram_id: userA.telegram_id,
+      playerId: userA.playerId,
+      session: tokenA,
+      wallet: databaseService.getOrCreateWallet(userA.playerId).balance,
+      tickets: Array.from(multiRoomManager.getRoom('room_20birr')!.tickets.values())
+        .filter((t: any) => t.playerId === userA.playerId)
+        .map((t: any) => t.ticketId)
+    };
 
-    // Verify Ledger history: User A has win_payout transaction; User B has NO win transaction
-    const historyA = ledgerService.getLedgerForUser(userA.playerId);
-    const historyB = ledgerService.getLedgerForUser(userB.playerId);
+    // Query state of user B
+    const stateB = {
+      telegram_id: userB.telegram_id,
+      playerId: userB.playerId,
+      session: tokenB,
+      wallet: databaseService.getOrCreateWallet(userB.playerId).balance,
+      tickets: Array.from(multiRoomManager.getRoom('room_20birr')!.tickets.values())
+        .filter((t: any) => t.playerId === userB.playerId)
+        .map((t: any) => t.ticketId)
+    };
 
-    const winEntryA = historyA.find((tx) => tx.type === 'win_payout');
-    const winEntryB = historyB.find((tx) => tx.type === 'win_payout');
+    // Assert complete isolation across all 5 dimensions as mandated in Requirement 18:
+    expect(stateA.telegram_id).not.toBe(stateB.telegram_id);
+    expect(stateA.playerId).not.toBe(stateB.playerId);
+    expect(stateA.session).not.toBe(stateB.session);
+    expect(stateA.tickets.length).toBeGreaterThan(0);
+    expect(stateB.tickets.length).toBeGreaterThan(0);
 
-    expect(winEntryA).toBeDefined();
-    expect(winEntryA?.amount).toBe(payout);
-    expect(winEntryB).toBeUndefined();
+    // Verify ticket IDs never collide
+    for (const ticketAId of stateA.tickets) {
+      expect(stateB.tickets).not.toContain(ticketAId);
+    }
   });
 });

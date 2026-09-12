@@ -103,7 +103,7 @@ export class TelegramSdkService {
     return null;
   }
 
-  public getUserProfile(): { id: string; username: string; avatarUrl?: string } {
+  public getUserProfile(): { id: string; username: string; avatarUrl?: string } | null {
     if (typeof window !== 'undefined' && window.Telegram?.WebApp?.initDataUnsafe?.user) {
       const tgUser = window.Telegram.WebApp.initDataUnsafe.user;
       return {
@@ -112,22 +112,7 @@ export class TelegramSdkService {
         avatarUrl: tgUser.photo_url
       };
     }
-
-    // Fallback for standalone web development
-    let savedId = localStorage.getItem('bingo_player_id');
-    let savedName = localStorage.getItem('bingo_username');
-    if (!savedId) {
-      savedId = `usr_${Math.floor(Math.random() * 8999 + 1000)}`;
-      savedName = `LuckyVIP_${savedId.slice(-4)}`;
-      localStorage.setItem('bingo_player_id', savedId);
-      localStorage.setItem('bingo_username', savedName);
-    }
-
-    return {
-      id: savedId,
-      username: savedName || 'LuckyVIP',
-      avatarUrl: undefined
-    };
+    return null;
   }
 
   public triggerHaptic(type: 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error' | 'selection') {
