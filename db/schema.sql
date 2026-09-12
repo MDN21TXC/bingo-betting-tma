@@ -199,3 +199,20 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 
 CREATE INDEX IF NOT EXISTS idx_audit_admin ON audit_logs(admin_user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_logs(target_user_id);
+
+-- 13. Pending Registrations table (Persistent storage for fallback sign-ups)
+CREATE TABLE IF NOT EXISTS pending_registrations (
+    id TEXT PRIMARY KEY,
+    phone TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    password_salt TEXT NOT NULL,
+    telegram_user_id TEXT,
+    status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'VERIFIED', 'DENIED', 'EXPIRED')),
+    denial_reason TEXT,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_reg_phone ON pending_registrations(phone);
+CREATE INDEX IF NOT EXISTS idx_pending_reg_telegram_id ON pending_registrations(telegram_user_id);

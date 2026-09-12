@@ -198,13 +198,14 @@ export class TelegramBotService {
       }
 
       // Default /start
+      const webAppUrl = process.env.TELEGRAM_WEBAPP_URL || process.env.WEBAPP_URL || process.env.FRONTEND_URL || 'http://localhost:5173';
       await this.sendMessage(chatId, `👋 <b>Welcome to BINGO BET!</b>\n\n🇪🇹 Ethiopia's #1 Live 75-Ball Bingo Betting Telegram Mini App.\n\nTap below to launch the game!`, {
         reply_markup: {
           inline_keyboard: [
             [
               {
                 text: '🎮 Launch BINGO BET',
-                web_app: { url: process.env.WEBAPP_URL || 'https://infrared-customized-treaty-bibliography.trycloudflare.com' }
+                web_app: { url: webAppUrl }
               }
             ]
           ]
@@ -234,7 +235,7 @@ export class TelegramBotService {
         if (expectedResetPhone && expectedResetPhone !== sharedPhone) {
           authService.denyPasswordReset(expectedResetPhone, `Phone mismatch: Reset requested ${expectedResetPhone} but Telegram shared ${sharedPhone}`);
           if (this.io) {
-            this.io.emit('PASSWORD_RESET_DENIED', {
+            this.io.to(`reset_${expectedResetPhone}`).emit('PASSWORD_RESET_DENIED', {
               expectedPhone: expectedResetPhone,
               sharedPhone,
               reason: `Phone mismatch: Reset requested ${expectedResetPhone} but Telegram shared ${sharedPhone}`
@@ -256,7 +257,7 @@ export class TelegramBotService {
         const authResult = authService.authorizePasswordReset(sharedPhone);
         if (authResult.success) {
           if (this.io) {
-            this.io.emit('PASSWORD_RESET_AUTHORIZED', {
+            this.io.to(`reset_${sharedPhone}`).emit('PASSWORD_RESET_AUTHORIZED', {
               phone: sharedPhone,
               resetToken: authResult.resetToken
             });
@@ -290,7 +291,7 @@ export class TelegramBotService {
         authService.denyPendingRegistration(expectedPhone, `Phone number mismatch: Sign-up requested ${expectedPhone} but Telegram shared ${sharedPhone}`);
 
         if (this.io) {
-          this.io.emit('REGISTRATION_DENIED', {
+          this.io.to(`reg_${expectedPhone}`).emit('REGISTRATION_DENIED', {
             expectedPhone,
             sharedPhone,
             reason: `Phone mismatch: Sign-up requested ${expectedPhone} but Telegram shared ${sharedPhone}`
@@ -321,15 +322,15 @@ export class TelegramBotService {
       );
 
       if (verifyResult.success && verifyResult.user) {
-        // Broadcast real-time verification to Web/TMA frontend via Socket.io
+        // Broadcast real-time verification to Web/TMA frontend via Socket.io (scoped to registration room)
         if (this.io) {
-          this.io.emit('REGISTRATION_SUCCESS', {
+          this.io.to(`reg_${sharedPhone}`).emit('REGISTRATION_SUCCESS', {
             phone: sharedPhone,
             success: true,
             user: verifyResult.user,
             token: verifyResult.token
           });
-          this.io.emit('PHONE_VERIFIED', {
+          this.io.to(`reg_${sharedPhone}`).emit('PHONE_VERIFIED', {
             phone: sharedPhone,
             success: true,
             user: verifyResult.user,
@@ -337,7 +338,7 @@ export class TelegramBotService {
           });
         }
 
-        const appUrl = process.env.WEBAPP_URL || 'https://infrared-customized-treaty-bibliography.trycloudflare.com';
+        const appUrl = process.env.TELEGRAM_WEBAPP_URL || process.env.WEBAPP_URL || process.env.FRONTEND_URL || 'http://localhost:5173';
 
         // Send confirmation on Telegram
         await this.sendMessage(chatId, `✅ <b>ስልክ ቁጥርዎ በትክክል ተረጋግጧል! (Phone Verified)</b>\n\n🎉 እንኳን ደስ አለዎት! <b>${verifyResult.user.username}</b> አዲስ አካውንትዎ በተሳካ ሁኔታ ተከፍቷል።\n💰 <b>1,000 Birr</b> የመጫወቻ ቦነስ ወደ ዋሌትዎ ገብቷል። አሁኑኑ መጫወት ይጀምሩ!`, {
@@ -389,7 +390,7 @@ export class TelegramBotService {
         `Phone mismatch: Sign-up requested ${targetExpected} but Telegram shared ${actualShared}`
       );
       if (this.io) {
-        this.io.emit('REGISTRATION_DENIED', {
+        this.io.to(`reg_${targetExpected}`).emit('REGISTRATION_DENIED', {
           expectedPhone: targetExpected,
           sharedPhone: actualShared,
           reason: `Phone mismatch: Sign-up requested ${targetExpected} but Telegram shared ${actualShared}`
@@ -410,13 +411,13 @@ export class TelegramBotService {
 
     if (verifyResult.success) {
       if (this.io) {
-        this.io.emit('REGISTRATION_SUCCESS', {
+        this.io.to(`reg_${actualShared}`).emit('REGISTRATION_SUCCESS', {
           phone: actualShared,
           success: true,
           user: verifyResult.user,
           token: verifyResult.token
         });
-        this.io.emit('PHONE_VERIFIED', {
+        this.io.to(`reg_${actualShared}`).emit('PHONE_VERIFIED', {
           phone: actualShared,
           success: true,
           user: verifyResult.user,
@@ -442,7 +443,7 @@ export class TelegramBotService {
     if (targetExpected && actualShared && targetExpected !== actualShared) {
       authService.denyPasswordReset(targetExpected, `Phone mismatch: Reset requested ${targetExpected} but Telegram shared ${actualShared}`);
       if (this.io) {
-        this.io.emit('PASSWORD_RESET_DENIED', {
+        this.io.to(`reset_${targetExpected}`).emit('PASSWORD_RESET_DENIED', {
           expectedPhone: targetExpected,
           sharedPhone: actualShared,
           reason: `Phone mismatch: Reset requested ${targetExpected} but Telegram shared ${actualShared}`
@@ -454,7 +455,7 @@ export class TelegramBotService {
     const authResult = authService.authorizePasswordReset(actualShared);
     if (authResult.success) {
       if (this.io) {
-        this.io.emit('PASSWORD_RESET_AUTHORIZED', {
+        this.io.to(`reset_${actualShared}`).emit('PASSWORD_RESET_AUTHORIZED', {
           phone: actualShared,
           resetToken: authResult.resetToken
         });

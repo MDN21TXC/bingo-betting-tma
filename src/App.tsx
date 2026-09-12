@@ -118,7 +118,8 @@ export default function App() {
   const handleOpenSignUp = (mode: AuthModalMode = 'register') => {
     soundService.playClick();
     telegramSdk.triggerHaptic('medium');
-    setAuthModalMode(mode);
+    const isTg = telegramSdk.isInsideTelegram() || Boolean(telegramSdk.getInitData());
+    setAuthModalMode(isTg ? 'tg_register' : mode);
     setAuthModalOpen(true);
   };
 

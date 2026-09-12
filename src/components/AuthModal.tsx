@@ -75,16 +75,32 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [tgReferralCode, setTgReferralCode] = useState<string>('');
 
   // Synchronize internal mode whenever modal is opened or requested mode changes
+  const isInsideTg = telegramSdk.isInsideTelegram() || Boolean(telegramSdk.getInitData());
+
   React.useEffect(() => {
     if (isOpen) {
-      setMode(initialMode);
+      if (isInsideTg && (initialMode === 'register' || initialMode === 'tg_register' || initialMode === 'teaser')) {
+        setMode('tg_register');
+        if (auth.status === 'UNINITIALIZED' || auth.status === 'UNAUTHENTICATED') {
+          auth.initAuth();
+        }
+      } else {
+        setMode(initialMode);
+      }
       setErrorMessage(null);
       setDeniedReason(null);
       setIsLoading(false);
       if (auth.suggestedUsername) setTgUsername(auth.suggestedUsername);
       if (auth.referralCode) setTgReferralCode(auth.referralCode);
     }
-  }, [isOpen, initialMode, auth.suggestedUsername, auth.referralCode]);
+  }, [isOpen, initialMode, auth.suggestedUsername, auth.referralCode, isInsideTg]);
+
+  // Guard: if inside Telegram, ensure mode is tg_register rather than register
+  React.useEffect(() => {
+    if (isOpen && isInsideTg && mode === 'register') {
+      setMode('tg_register');
+    }
+  }, [isOpen, isInsideTg, mode]);
 
   React.useEffect(() => {
     if (auth.suggestedUsername && !tgUsername) {
@@ -102,10 +118,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   React.useEffect(() => {
     if (!socket || !isOpen) return;
 
+    const targetPhone = pendingPhone || phone;
+    if (targetPhone && mode === 'verify') {
+      socket.emit('SUBSCRIBE_REGISTRATION', { phone: targetPhone });
+    }
+    if (targetPhone && mode === 'reset_verify') {
+      socket.emit('SUBSCRIBE_PASSWORD_RESET', { phone: targetPhone });
+    }
+
     const handleRegSuccess = (data: { phone: string; user: UserAccount; token?: string }) => {
       if (mode !== 'verify') return;
-      const targetPhone = pendingPhone || phone;
-      if (!targetPhone || data.phone.endsWith(targetPhone.slice(-8))) {
+      const target = pendingPhone || phone;
+      if (!target || data.phone.endsWith(target.slice(-8))) {
         if (data.token) localStorage.setItem('bingo_auth_token', data.token);
         soundService.playJackpotFanfare();
         telegramSdk.triggerHaptic('success');
@@ -117,8 +141,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     const handleRegDenied = (data: { expectedPhone: string; sharedPhone: string; reason?: string }) => {
       if (mode !== 'verify') return;
-      const targetPhone = pendingPhone || phone;
-      if (!targetPhone || data.expectedPhone.endsWith(targetPhone.slice(-8))) {
+      const target = pendingPhone || phone;
+      if (!target || data.expectedPhone.endsWith(target.slice(-8))) {
         setDeniedReason(
           `Verification Denied: Sign-up phone (${data.expectedPhone}) does not match the phone shared in Telegram (${data.sharedPhone}). Account creation was denied.`
         );
@@ -128,8 +152,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     };
 
     const handleResetAuthorized = (data: { phone: string; resetToken: string }) => {
-      const targetPhone = pendingPhone || phone;
-      if (!targetPhone || data.phone.endsWith(targetPhone.slice(-8))) {
+      const target = pendingPhone || phone;
+      if (!target || data.phone.endsWith(target.slice(-8))) {
         setResetToken(data.resetToken);
         soundService.playLineChime();
         telegramSdk.triggerHaptic('success');
@@ -139,8 +163,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     };
 
     const handleResetDenied = (data: { expectedPhone: string; sharedPhone: string; reason?: string }) => {
-      const targetPhone = pendingPhone || phone;
-      if (!targetPhone || data.expectedPhone.endsWith(targetPhone.slice(-8))) {
+      const target = pendingPhone || phone;
+      if (!target || data.expectedPhone.endsWith(target.slice(-8))) {
         setDeniedReason(
           `Reset Denied: Registered phone (${data.expectedPhone}) does not match the phone shared in Telegram (${data.sharedPhone}). Password reset was denied.`
         );
@@ -156,6 +180,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     socket.on('PASSWORD_RESET_DENIED', handleResetDenied);
 
     return () => {
+      if (targetPhone) {
+        socket.emit('UNSUBSCRIBE_REGISTRATION', { phone: targetPhone });
+        socket.emit('UNSUBSCRIBE_PASSWORD_RESET', { phone: targetPhone });
+      }
       socket.off('REGISTRATION_SUCCESS', handleRegSuccess);
       socket.off('PHONE_VERIFIED', handleRegSuccess);
       socket.off('REGISTRATION_DENIED', handleRegDenied);
@@ -663,6 +691,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
           {/* TELEGRAM REGISTRATION MODE: Complete Telegram Profile */}
           {mode === 'tg_register' && (
+            (auth.isLoading || auth.status === 'AUTHENTICATING') ? (
+              <div className="py-12 text-center space-y-3">
+                <RefreshCw className="w-8 h-8 mx-auto animate-spin text-[#E8FF00]" />
+                <p className="text-xs font-bold text-white uppercase tracking-wider">Verifying Telegram Identity...</p>
+                <p className="text-[11px] text-white/50">Securing your account with Telegram initData</p>
+              </div>
+            ) : (
             <form onSubmit={handleTgRegisterSubmit} className="space-y-4 py-1 animate-fadeIn">
               <div className="text-center space-y-1">
                 <div className="w-12 h-12 mx-auto rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.2)]">
@@ -748,6 +783,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 )}
               </button>
             </form>
+            )
           )}
 
           {/* 1. TEASER MODE */}

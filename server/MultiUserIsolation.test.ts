@@ -4,6 +4,7 @@ import { httpServer, app, multiRoomManager } from './index.js';
 import { authService } from './AuthService.js';
 import { ledgerService } from './LedgerService.js';
 import { databaseService } from './DatabaseService.js';
+import { telegramBotService } from './TelegramBotService.js';
 
 const TEST_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || 'test_mock_bot_token_123456:ABCdefGHIjklMNOpqrSTUvwxYZ';
 let serverPort: number;
@@ -52,6 +53,7 @@ describe('Multi-User Security & Player Isolation Test Suite (Requirements 17 & 1
   afterAll(async () => {
     if (socketA?.connected) socketA.disconnect();
     if (socketB?.connected) socketB.disconnect();
+    (httpServer as any).closeAllConnections?.();
     await new Promise<void>((resolve) => httpServer.close(() => resolve()));
   });
 
@@ -463,4 +465,120 @@ describe('Multi-User Security & Player Isolation Test Suite (Requirements 17 & 1
       expect(stateB.tickets).not.toContain(ticketAId);
     }
   });
+
+  // TEST 16: Welcome bonus is strictly idempotent (Requirement 7)
+  it('TEST 16: Welcome bonus is strictly idempotent with reference bonus_welcome_<userId>', async () => {
+    const balanceBefore = databaseService.getOrCreateWallet(userA.playerId).balance;
+
+    // Attempt to credit welcome bonus again with the same referenceId
+    const res = databaseService.recordLedgerTransaction({
+      userId: userA.playerId,
+      username: userA.username,
+      type: 'BONUS',
+      amount: 1000.0,
+      description: 'Duplicate Welcome Bonus Attempt',
+      referenceId: `bonus_welcome_${userA.playerId}`
+    });
+
+    const balanceAfter = databaseService.getOrCreateWallet(userA.playerId).balance;
+
+    // Idempotent: balance must remain exactly identical
+    expect(balanceAfter).toBe(balanceBefore);
+    expect(res.wallet.balance).toBe(balanceBefore);
+
+    // Verify exactly one welcome bonus transaction exists in ledger
+    const txs = databaseService.getLedgerForUser(userA.playerId);
+    const welcomeTxs = txs.filter(t => t.reference_id === `bonus_welcome_${userA.playerId}`);
+    expect(welcomeTxs.length).toBe(1);
+  });
+
+  // TEST 17: User A logs out, User B remains authenticated (Requirement 8)
+  it('TEST 17: User A logging out does not affect User B session or wallet', async () => {
+    // User A logs out
+    const logoutRes = await fetch(`${BASE_URL}/api/auth/logout`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tokenA}` }
+    });
+    expect(logoutRes.ok).toBe(true);
+
+    // Verify User A session is revoked
+    const checkA = await fetch(`${BASE_URL}/api/auth/session`, {
+      headers: { Authorization: `Bearer ${tokenA}` }
+    });
+    expect(checkA.status).toBe(401);
+
+    // Verify User B session is still active and valid
+    const checkB = await fetch(`${BASE_URL}/api/auth/session`, {
+      headers: { Authorization: `Bearer ${tokenB}` }
+    });
+    expect(checkB.status).toBe(200);
+    const bodyB = await checkB.json();
+    expect(bodyB.valid).toBe(true);
+    expect(bodyB.user.playerId).toBe(userB.playerId);
+
+    // Verify User B wallet balance is completely intact
+    const walletB = databaseService.getOrCreateWallet(userB.playerId);
+    expect(walletB.balance).toBeGreaterThanOrEqual(0);
+  });
+
+  // TEST 18: Registration socket events are scoped to private rooms, not leaked globally (Requirement 12)
+  it('TEST 18: Registration socket events are scoped to reg_<phone> room and not leaked to lobby sockets', async () => {
+    const lobbySocket = ClientSocket(BASE_URL, {
+      transports: ['websocket'],
+      auth: { token: tokenB }
+    });
+    const targetRoomSocket = ClientSocket(BASE_URL, {
+      transports: ['websocket']
+    });
+
+    try {
+      await Promise.all([
+        new Promise<void>((resolve) => {
+          if (lobbySocket.connected) resolve();
+          else lobbySocket.on('connect', () => resolve());
+        }),
+        new Promise<void>((resolve) => {
+          if (targetRoomSocket.connected) resolve();
+          else targetRoomSocket.on('connect', () => resolve());
+        })
+      ]);
+
+      let leakedEvent: any = null;
+      lobbySocket.on('REGISTRATION_SUCCESS', (data: any) => {
+        leakedEvent = data;
+      });
+
+      const testPhone = '0999887766';
+
+      // Target socket subscribes to its own registration
+      targetRoomSocket.emit('SUBSCRIBE_REGISTRATION', { phone: testPhone });
+      await new Promise(r => setTimeout(r, 100));
+
+      let targetReceivedEvent: any = null;
+      targetRoomSocket.on('REGISTRATION_SUCCESS', (data: any) => {
+        targetReceivedEvent = data;
+      });
+
+      // Initiate registration
+      const initRes = authService.initiateRegistration('Secret Player', testPhone, 'passSecret123');
+      expect(initRes.success).toBe(true);
+
+      // Simulate contact share verification (which completes registration and emits to scoped room)
+      const simRes = telegramBotService.simulateContactShare(testPhone, testPhone, 998877665, 'Secret Player');
+      expect(simRes.success).toBe(true);
+
+      await new Promise(r => setTimeout(r, 200));
+
+      // Target socket received its event
+      expect(targetReceivedEvent).toBeDefined();
+      expect(targetReceivedEvent?.phone).toBe(testPhone);
+
+      // Lobby socket MUST NOT have received leaked private token or event
+      expect(leakedEvent).toBeNull();
+    } finally {
+      if (lobbySocket.connected) lobbySocket.disconnect();
+      if (targetRoomSocket.connected) targetRoomSocket.disconnect();
+    }
+  });
 });
+

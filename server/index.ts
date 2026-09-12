@@ -733,6 +733,36 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
   socket.emit('LOBBY_OVERVIEW', multiRoomManager.getLobbySummaries());
 
+  // Subscribe to private registration verification events
+  socket.on('SUBSCRIBE_REGISTRATION', (data: { phone?: string }) => {
+    if (data?.phone) {
+      const normalized = authService.normalizePhone(data.phone);
+      socket.join(`reg_${normalized}`);
+    }
+  });
+
+  socket.on('UNSUBSCRIBE_REGISTRATION', (data: { phone?: string }) => {
+    if (data?.phone) {
+      const normalized = authService.normalizePhone(data.phone);
+      socket.leave(`reg_${normalized}`);
+    }
+  });
+
+  // Subscribe to private password reset verification events
+  socket.on('SUBSCRIBE_PASSWORD_RESET', (data: { phone?: string }) => {
+    if (data?.phone) {
+      const normalized = authService.normalizePhone(data.phone);
+      socket.join(`reset_${normalized}`);
+    }
+  });
+
+  socket.on('UNSUBSCRIBE_PASSWORD_RESET', (data: { phone?: string }) => {
+    if (data?.phone) {
+      const normalized = authService.normalizePhone(data.phone);
+      socket.leave(`reset_${normalized}`);
+    }
+  });
+
   // Join a specific game room
   socket.on('JOIN_ROOM', (data: { roomId: string }, callback) => {
     const { roomId } = data;

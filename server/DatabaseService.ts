@@ -134,6 +134,19 @@ export interface AuditRow {
   timestamp: string;
 }
 
+export interface PendingRegistrationRow {
+  id: string;
+  phone: string;
+  name: string;
+  password_hash: string;
+  password_salt: string;
+  telegram_user_id?: string;
+  status: 'PENDING' | 'VERIFIED' | 'DENIED' | 'EXPIRED';
+  denial_reason?: string;
+  created_at: string;
+  expires_at: string;
+}
+
 export class DatabaseService {
   private db: any;
   private isMemory: boolean;
@@ -419,6 +432,14 @@ export class DatabaseService {
     referenceId?: string;
   }): { entry: LedgerRow; wallet: WalletRow } {
     return this.transaction(() => {
+      // Idempotency check: if referenceId was already processed, return existing record
+      if (data.referenceId) {
+        const existingTx = this.db.prepare('SELECT * FROM ledger_transactions WHERE reference_id = ?').get(data.referenceId) as LedgerRow | undefined;
+        if (existingTx) {
+          return { entry: existingTx, wallet: this.getOrCreateWallet(data.userId) };
+        }
+      }
+
       const wallet = this.getOrCreateWallet(data.userId);
       const balanceBefore = wallet.balance;
       let balanceAfter = balanceBefore;
@@ -945,11 +966,102 @@ export class DatabaseService {
     return stmt.all() as AuditRow[];
   }
 
+  // ==================== PENDING REGISTRATIONS ====================
+
+  public createPendingRegistration(data: {
+    id: string;
+    phone: string;
+    name: string;
+    passwordHash: string;
+    salt: string;
+    telegramUserId?: string;
+    expiresInMinutes?: number;
+  }): PendingRegistrationRow {
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + (data.expiresInMinutes || 60) * 60000);
+    const createdAtStr = now.toISOString();
+    const expiresAtStr = expiresAt.toISOString();
+
+    const stmt = this.db.prepare(`
+      INSERT INTO pending_registrations (
+        id, phone, name, password_hash, password_salt, telegram_user_id, status, created_at, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
+      ON CONFLICT(phone) DO UPDATE SET
+        name = excluded.name,
+        password_hash = excluded.password_hash,
+        password_salt = excluded.password_salt,
+        telegram_user_id = excluded.telegram_user_id,
+        status = 'PENDING',
+        denial_reason = NULL,
+        created_at = excluded.created_at,
+        expires_at = excluded.expires_at
+    `);
+
+    stmt.run(
+      data.id,
+      data.phone,
+      data.name,
+      data.passwordHash,
+      data.salt,
+      data.telegramUserId || null,
+      createdAtStr,
+      expiresAtStr
+    );
+
+    return this.getPendingRegistrationByPhone(data.phone)!;
+  }
+
+  public getPendingRegistrationByPhone(phone: string): PendingRegistrationRow | undefined {
+    const stmt = this.db.prepare('SELECT * FROM pending_registrations WHERE phone = ?');
+    return stmt.get(phone) as PendingRegistrationRow | undefined;
+  }
+
+  public getPendingRegistrationById(id: string): PendingRegistrationRow | undefined {
+    const stmt = this.db.prepare('SELECT * FROM pending_registrations WHERE id = ?');
+    return stmt.get(id) as PendingRegistrationRow | undefined;
+  }
+
+  public updatePendingRegistration(
+    id: string,
+    updates: Partial<{
+      status: 'PENDING' | 'VERIFIED' | 'DENIED' | 'EXPIRED';
+      denial_reason?: string;
+      telegram_user_id?: string;
+    }>
+  ): PendingRegistrationRow | undefined {
+    const fields: string[] = [];
+    const values: any[] = [];
+
+    if (updates.status !== undefined) {
+      fields.push('status = ?');
+      values.push(updates.status);
+    }
+    if (updates.denial_reason !== undefined) {
+      fields.push('denial_reason = ?');
+      values.push(updates.denial_reason);
+    }
+    if (updates.telegram_user_id !== undefined) {
+      fields.push('telegram_user_id = ?');
+      values.push(updates.telegram_user_id);
+    }
+
+    if (fields.length === 0) return this.getPendingRegistrationById(id);
+
+    values.push(id);
+    this.db.prepare(`UPDATE pending_registrations SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    return this.getPendingRegistrationById(id);
+  }
+
+  public deletePendingRegistration(id: string): void {
+    this.db.prepare('DELETE FROM pending_registrations WHERE id = ?').run(id);
+  }
+
   /**
    * Reset database (primarily for clean test suite runs)
    */
   public resetDatabase(): void {
     this.db.exec(`
+      DELETE FROM pending_registrations;
       DELETE FROM audit_logs;
       DELETE FROM bingo_claims;
       DELETE FROM player_tickets;

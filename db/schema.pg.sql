@@ -163,3 +163,20 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     metadata_json JSONB,
     timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- 13. Pending Registrations table (PostgreSQL)
+CREATE TABLE IF NOT EXISTS pending_registrations (
+    id VARCHAR(64) PRIMARY KEY,
+    phone VARCHAR(32) NOT NULL UNIQUE,
+    name VARCHAR(128) NOT NULL,
+    password_hash VARCHAR(256) NOT NULL,
+    password_salt VARCHAR(128) NOT NULL,
+    telegram_user_id VARCHAR(64),
+    status VARCHAR(32) NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'VERIFIED', 'DENIED', 'EXPIRED')),
+    denial_reason VARCHAR(256),
+    created_at VARCHAR(64) NOT NULL,
+    expires_at VARCHAR(64) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pg_pending_reg_phone ON pending_registrations(phone);
+CREATE INDEX IF NOT EXISTS idx_pg_pending_reg_telegram_id ON pending_registrations(telegram_user_id);

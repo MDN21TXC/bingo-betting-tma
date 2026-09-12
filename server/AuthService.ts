@@ -764,6 +764,16 @@ export class AuthService {
     this.pendingRegistrations.set(normalizedPhone, pending);
     this.pendingById.set(pendingId, normalizedPhone);
 
+    // Persist to database so server restart does not lose sign-up requests
+    databaseService.createPendingRegistration({
+      id: pendingId,
+      phone: normalizedPhone,
+      name: name.trim(),
+      passwordHash,
+      salt,
+      expiresInMinutes: 60
+    });
+
     return {
       success: true,
       pendingId,
@@ -776,36 +786,79 @@ export class AuthService {
   public getRegistrationStatus(identifier: string) {
     const phone = this.pendingById.get(identifier) || this.normalizePhone(identifier);
     const pending = this.pendingRegistrations.get(phone);
-    if (!pending) {
-      const user = databaseService.getUserByPhone(phone);
-      if (user && user.registration_status === 'COMPLETED') {
-        const session = databaseService.createSession(user.id, String(user.telegram_id || ''));
-        const wallet = databaseService.getOrCreateWallet(user.id);
-        const userRecord: UserRecord = {
-          ...user,
-          playerId: user.id,
-          walletBalance: wallet.balance,
-          isBot: false,
-          isVerified: true
-        };
-        return {
-          status: 'verified',
-          phone,
-          name: user.username,
-          user: userRecord,
-          token: session.id
-        };
-      }
-      return { status: 'not_found', error: 'Registration request not found or expired' };
+    if (pending) {
+      return {
+        status: pending.status,
+        phone: pending.phone,
+        name: pending.name,
+        denialReason: pending.denialReason,
+        user: pending.user,
+        token: pending.token
+      };
     }
-    return {
-      status: pending.status,
-      phone: pending.phone,
-      name: pending.name,
-      denialReason: pending.denialReason,
-      user: pending.user,
-      token: pending.token
-    };
+
+    // Check persistent database table for pending registration
+    const dbPending = databaseService.getPendingRegistrationByPhone(phone) || databaseService.getPendingRegistrationById(identifier);
+    if (dbPending) {
+      if (dbPending.status === 'VERIFIED') {
+        const user = databaseService.getUserByPhone(dbPending.phone);
+        if (user) {
+          const session = databaseService.createSession(user.id, String(user.telegram_id || ''));
+          const wallet = databaseService.getOrCreateWallet(user.id);
+          const userRecord: UserRecord = {
+            ...user,
+            playerId: user.id,
+            walletBalance: wallet.balance,
+            isBot: false,
+            isVerified: true
+          };
+          return {
+            status: 'verified',
+            phone: dbPending.phone,
+            name: user.username,
+            user: userRecord,
+            token: session.id
+          };
+        }
+      } else if (dbPending.status === 'DENIED') {
+        return {
+          status: 'denied',
+          phone: dbPending.phone,
+          name: dbPending.name,
+          denialReason: dbPending.denial_reason
+        };
+      } else if (new Date(dbPending.expires_at).getTime() < Date.now()) {
+        return { status: 'expired', error: 'Registration request has expired. Please sign up again.' };
+      }
+      return {
+        status: 'pending',
+        phone: dbPending.phone,
+        name: dbPending.name
+      };
+    }
+
+    // Fallback: check if already completed user
+    const user = databaseService.getUserByPhone(phone);
+    if (user && user.registration_status === 'COMPLETED') {
+      const session = databaseService.createSession(user.id, String(user.telegram_id || ''));
+      const wallet = databaseService.getOrCreateWallet(user.id);
+      const userRecord: UserRecord = {
+        ...user,
+        playerId: user.id,
+        walletBalance: wallet.balance,
+        isBot: false,
+        isVerified: true
+      };
+      return {
+        status: 'verified',
+        phone,
+        name: user.username,
+        user: userRecord,
+        token: session.id
+      };
+    }
+
+    return { status: 'not_found', error: 'Registration request not found or expired' };
   }
 
   public completeVerifiedRegistration(
@@ -818,7 +871,27 @@ export class AuthService {
     const playerId = `tg_${telegramId}`;
 
     try {
-      // 1. If pending registration exists from web app form
+      // 0. Check if user already completed
+      const existingUser = databaseService.getUserById(playerId) || databaseService.getUserByTelegramId(String(telegramId));
+      if (existingUser) {
+        const session = databaseService.createSession(existingUser.id, String(telegramId));
+        const wallet = databaseService.getOrCreateWallet(existingUser.id);
+        const userRecord: UserRecord = {
+          ...existingUser,
+          playerId: existingUser.id,
+          walletBalance: wallet.balance,
+          isBot: false,
+          isVerified: true
+        };
+        if (pending) {
+          pending.status = 'verified';
+          pending.user = userRecord;
+          pending.token = session.id;
+        }
+        return { success: true, user: userRecord, token: session.id, requiresVerification: false };
+      }
+
+      // 1. If pending registration exists from in-memory cache
       if (pending) {
         const referralCode = this.generateUniqueReferralCode(pending.name);
         const created = databaseService.createUser({
@@ -847,6 +920,14 @@ export class AuthService {
         const session = databaseService.createSession(created.id, String(telegramId));
         const wallet = databaseService.getOrCreateWallet(created.id);
 
+        const dbPending = databaseService.getPendingRegistrationByPhone(normalizedPhone);
+        if (dbPending) {
+          databaseService.updatePendingRegistration(dbPending.id, {
+            status: 'VERIFIED',
+            telegram_user_id: String(telegramId)
+          });
+        }
+
         const userRecord: UserRecord = {
           ...created,
           playerId: created.id,
@@ -858,6 +939,52 @@ export class AuthService {
         pending.status = 'verified';
         pending.user = userRecord;
         pending.token = session.id;
+
+        return { success: true, user: userRecord, token: session.id, requiresVerification: false };
+      }
+
+      // 1b. Check persistent database table for pending registration
+      const dbPending = databaseService.getPendingRegistrationByPhone(normalizedPhone);
+      if (dbPending && dbPending.status !== 'EXPIRED' && dbPending.status !== 'DENIED') {
+        const referralCode = this.generateUniqueReferralCode(dbPending.name);
+        const created = databaseService.createUser({
+          id: playerId,
+          telegram_id: String(telegramId),
+          telegram_username: telegramUsername,
+          username: dbPending.name,
+          phone: normalizedPhone,
+          password_hash: dbPending.password_hash,
+          password_salt: dbPending.password_salt,
+          referral_code: referralCode,
+          role: 'USER',
+          account_status: 'ACTIVE',
+          registration_status: 'COMPLETED'
+        });
+
+        databaseService.recordLedgerTransaction({
+          userId: created.id,
+          username: created.username,
+          type: 'BONUS',
+          amount: 1000.0,
+          description: 'Welcome Bonus for Phone Verification',
+          referenceId: `bonus_welcome_${created.id}`
+        });
+
+        const session = databaseService.createSession(created.id, String(telegramId));
+        const wallet = databaseService.getOrCreateWallet(created.id);
+
+        databaseService.updatePendingRegistration(dbPending.id, {
+          status: 'VERIFIED',
+          telegram_user_id: String(telegramId)
+        });
+
+        const userRecord: UserRecord = {
+          ...created,
+          playerId: created.id,
+          walletBalance: wallet.balance,
+          isBot: false,
+          isVerified: true
+        };
 
         return { success: true, user: userRecord, token: session.id, requiresVerification: false };
       }
@@ -961,15 +1088,16 @@ export class AuthService {
     let user = databaseService.getUserByPhone(normalized);
 
     if (!user) {
-      const pending = this.pendingRegistrations.get(normalized);
+      const pending = this.pendingRegistrations.get(normalized) || databaseService.getPendingRegistrationByPhone(normalized);
       if (pending) {
+        const tgId = (pending as any).telegramId || (pending as any).telegram_user_id || code || `88${normalized.replace(/\D/g, '')}`;
         return this.completeTelegramRegistrationShare(
           normalized,
-          pending.telegramId || 100000000 + Math.floor(Math.random() * 800000000),
-          pending.telegramUsername || pending.name
+          tgId,
+          (pending as any).telegramUsername || (pending as any).name
         );
       }
-      return { success: false, error: 'User not found' };
+      return { success: false, error: 'User not found or phone not verified via Telegram' };
     }
 
     const wallet = databaseService.getOrCreateWallet(user.id);
