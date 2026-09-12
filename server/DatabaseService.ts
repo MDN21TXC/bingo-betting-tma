@@ -179,6 +179,30 @@ export class DatabaseService {
       const schemaSql = fs.readFileSync(schemaPath, 'utf8');
       this.db.exec(schemaSql);
     }
+
+    this.runMigrations();
+  }
+
+  /**
+   * Idempotent migrations for existing production and local databases
+   */
+  private runMigrations() {
+    try {
+      const userCols = this.db.prepare('PRAGMA table_info(users)').all() as Array<{ name: string }>;
+      const colNames = new Set(userCols.map((c: any) => c.name));
+
+      if (!colNames.has('password_hash')) {
+        console.log('[DatabaseService] Running migration: adding password_hash to users table');
+        this.db.exec('ALTER TABLE users ADD COLUMN password_hash TEXT DEFAULT NULL;');
+      }
+
+      if (!colNames.has('password_salt')) {
+        console.log('[DatabaseService] Running migration: adding password_salt to users table');
+        this.db.exec('ALTER TABLE users ADD COLUMN password_salt TEXT DEFAULT NULL;');
+      }
+    } catch (err) {
+      console.error('[DatabaseService] Migration check warning:', err);
+    }
   }
 
   private transactionDepth: number = 0;
@@ -300,7 +324,7 @@ export class DatabaseService {
   ): UserRow {
     const allowed = [
       'telegram_username', 'first_name', 'last_name', 'username',
-      'phone', 'referral_code', 'referred_by', 'role',
+      'phone', 'password_hash', 'password_salt', 'referral_code', 'referred_by', 'role',
       'account_status', 'registration_status', 'avatar_url',
       'is_bot', 'last_login_at'
     ];
