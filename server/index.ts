@@ -299,32 +299,46 @@ app.post('/api/user/sync', optionalSession, (req: any, res) => {
   res.json({ success: true, user });
 });
 
-// Fetch full user profile & stats (Secured with session authorization)
-app.get('/api/user/profile/:playerId?', optionalSession, (req: any, res) => {
-  const requestedId = req.params.playerId;
-  const currentUserId = req.user?.playerId;
-
-  // IDOR Protection: If authenticated and requesting another user's profile, reject
-  if (currentUserId && requestedId && requestedId !== currentUserId) {
-    return res.status(403).json({ error: 'Access denied: Cannot access another user\'s private profile' });
+// Dedicated authenticated profile endpoint (Identity strictly from session/token)
+app.get('/api/profile', authenticateSession, (req: any, res) => {
+  const profile = authService.getFullProfile(req.user.playerId);
+  if (!profile) {
+    return res.status(404).json({ error: 'User profile not found' });
   }
+  res.json({ profile });
+});
 
-  const targetPlayerId = requestedId || currentUserId;
-  if (!targetPlayerId) {
+// Fetch full user profile & stats (Secured with session authorization & IDOR prevention)
+app.get('/api/user/profile/:playerId?', optionalSession, (req: any, res) => {
+  if (!req.user) {
     return res.status(401).json({ error: 'Authentication required' });
   }
 
-  const profile = authService.getFullProfile(targetPlayerId);
+  const requestedId = req.params.playerId;
+  const currentUserId = req.user.playerId;
+
+  // IDOR Protection: Strictly reject requesting another user's profile
+  if (requestedId && requestedId !== currentUserId) {
+    return res.status(403).json({ error: 'Access denied: Cannot access another user\'s private profile' });
+  }
+
+  const profile = authService.getFullProfile(currentUserId);
   if (!profile) {
-    const fallbackUser = ledgerService.getUser(targetPlayerId);
+    const fallbackUser = ledgerService.getUser(currentUserId);
     if (!fallbackUser) return res.status(404).json({ error: 'User not found' });
     return res.json({
       profile: {
         ...fallbackUser,
-        phone: fallbackUser.phone || '',
+        phone: fallbackUser.phone || null,
         totalGamesPlayed: 0,
         totalWonETB: 0,
-        vipTier: 'Player'
+        currentStreak: 0,
+        xp: 0,
+        level: 1,
+        levelProgressXp: 0,
+        levelTotalXp: 500,
+        levelPercent: 0,
+        vipTier: 'BRONZE VIP'
       }
     });
   }

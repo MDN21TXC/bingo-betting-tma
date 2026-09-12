@@ -106,6 +106,25 @@ export interface UserAccount {
   totalGamesPlayed?: number;
   totalWonETB?: number;
   vipTier?: string;
+  currentStreak?: number;
+  xp?: number;
+  level?: number;
+  levelProgressXp?: number;
+  levelTotalXp?: number;
+  levelPercent?: number;
+  telegram_username?: string;
+}
+
+export interface UserProfile extends UserAccount {
+  totalGamesPlayed: number;
+  totalWonETB: number;
+  currentStreak: number;
+  xp: number;
+  level: number;
+  levelProgressXp: number;
+  levelTotalXp: number;
+  levelPercent: number;
+  vipTier: string;
 }
 
 export interface LedgerEntry {

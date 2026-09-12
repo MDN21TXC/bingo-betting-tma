@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   Wallet as WalletIcon,
@@ -24,9 +24,10 @@ import {
   Flame,
   ArrowLeft
 } from 'lucide-react';
-import { UserAccount } from '../types/bingo.js';
+import { UserAccount, UserProfile } from '../types/bingo.js';
 import { soundService } from '../services/soundService.js';
 import { telegramSdk } from '../services/telegramSdk.js';
+import { useAuth } from '../services/authContext.js';
 
 interface UserProfileDrawerProps {
   isOpen: boolean;
@@ -61,9 +62,42 @@ export const UserProfileDrawer: React.FC<UserProfileDrawerProps> = ({
   onLogout,
   onOpenAdmin,
 }) => {
+  const { sessionToken } = useAuth();
+  const [profileData, setProfileData] = useState<UserProfile | null>(null);
   const [copiedId, setCopiedId] = useState(false);
   const [soundOn, setSoundOn] = useState(soundService.isSoundEnabled());
   const [voiceOn, setVoiceOn] = useState(soundService.isVoiceCallerEnabled());
+
+  // Strictly isolate profile data per authenticated user session
+  useEffect(() => {
+    if (!isOpen || !user) {
+      setProfileData(null);
+      return;
+    }
+
+    let isMounted = true;
+    const token = sessionToken || localStorage.getItem('bingo_auth_token');
+    if (!token) return;
+
+    fetch('/api/profile', {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (isMounted && data?.profile) {
+          setProfileData(data.profile);
+        }
+      })
+      .catch(err => {
+        console.warn('Failed to fetch authoritative user profile:', err);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen, user?.playerId, sessionToken]);
 
   if (!isOpen) return null;
 
@@ -73,8 +107,9 @@ export const UserProfileDrawer: React.FC<UserProfileDrawerProps> = ({
   };
 
   const formatBalance = () => {
-    if (!user || typeof user.walletBalance !== 'number') return '0.00';
-    return user.walletBalance.toLocaleString(undefined, {
+    const bal = profileData?.walletBalance ?? user?.walletBalance;
+    if (typeof bal !== 'number') return '0.00';
+    return bal.toLocaleString(undefined, {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2
     });
@@ -152,93 +187,123 @@ export const UserProfileDrawer: React.FC<UserProfileDrawerProps> = ({
         {user ? (
           <>
             {/* 1. HERO PROFILE CARD */}
-            <div className="p-4 rounded-2xl bg-[#111111] border border-white/10 space-y-3 relative overflow-hidden shadow-sm">
-              <div className="flex items-center gap-3.5">
-                {/* Avatar */}
-                <div className="relative flex-shrink-0">
-                  {user.avatarUrl ? (
-                    <img
-                      src={user.avatarUrl}
-                      alt={user.username}
-                      className="w-14 h-14 rounded-2xl object-cover border-2 border-[#E8FF00] shadow-[0_0_15px_rgba(232,255,0,0.3)]"
-                    />
-                  ) : (
-                    <div className="w-14 h-14 rounded-2xl bg-[#E8FF00] text-black flex items-center justify-center font-arcade font-black text-2xl shadow-[0_0_15px_rgba(232,255,0,0.4)]">
-                      {getInitial(user.username)}
+            {(() => {
+              const activeUsername = profileData?.username || user.username;
+              const displayPhone = profileData?.phone || user.phone;
+              const telegramHandle = profileData?.telegram_username || (user as any).telegram_username;
+              const currentStreak = profileData ? profileData.currentStreak : (user.currentStreak ?? 0);
+              const totalGamesPlayed = profileData ? profileData.totalGamesPlayed : (user.totalGamesPlayed ?? 0);
+              const totalWonETB = profileData ? profileData.totalWonETB : (user.totalWonETB ?? 0);
+              const level = profileData ? profileData.level : (user.level ?? 1);
+              const levelProgressXp = profileData ? profileData.levelProgressXp : (user.levelProgressXp ?? 0);
+              const levelTotalXp = profileData ? profileData.levelTotalXp : (user.levelTotalXp ?? 500);
+              const levelPercent = profileData ? profileData.levelPercent : (user.levelPercent ?? 0);
+              const vipTier = profileData?.vipTier || user.vipTier || 'BRONZE VIP';
+
+              return (
+                <div className="p-4 rounded-2xl bg-[#111111] border border-white/10 space-y-3 relative overflow-hidden shadow-sm">
+                  <div className="flex items-center gap-3.5">
+                    {/* Avatar */}
+                    <div className="relative flex-shrink-0">
+                      {user.avatarUrl ? (
+                        <img
+                          src={user.avatarUrl}
+                          alt={activeUsername}
+                          className="w-14 h-14 rounded-2xl object-cover border-2 border-[#E8FF00] shadow-[0_0_15px_rgba(232,255,0,0.3)]"
+                        />
+                      ) : (
+                        <div className="w-14 h-14 rounded-2xl bg-[#E8FF00] text-black flex items-center justify-center font-arcade font-black text-2xl shadow-[0_0_15px_rgba(232,255,0,0.4)]">
+                          {getInitial(activeUsername)}
+                        </div>
+                      )}
+                      <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-emerald-500 border-2 border-[#111111] flex items-center justify-center text-[8px] text-black font-bold">
+                        ✓
+                      </span>
                     </div>
-                  )}
-                  <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-emerald-500 border-2 border-[#111111] flex items-center justify-center text-[8px] text-black font-bold">
-                    ✓
-                  </span>
-                </div>
 
-                {/* User Details */}
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-arcade font-black text-base text-white truncate">
-                      {user.username}
-                    </span>
-                    <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 text-[8px] font-arcade font-bold">
-                      VERIFIED
-                    </span>
+                    {/* User Details */}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-arcade font-black text-base text-white truncate">
+                          {activeUsername}
+                        </span>
+                        <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 text-[8px] font-arcade font-bold">
+                          VERIFIED
+                        </span>
+                      </div>
+
+                      <div className="text-[10px] font-arcade text-white/50 flex items-center gap-1 mt-0.5">
+                        {displayPhone ? (
+                          <>
+                            <Phone className="w-3 h-3 text-[#E8FF00]" />
+                            <span>{displayPhone}</span>
+                          </>
+                        ) : telegramHandle ? (
+                          <>
+                            <span className="text-[#E8FF00] font-bold text-[11px]">@</span>
+                            <span>{telegramHandle}</span>
+                          </>
+                        ) : (
+                          <>
+                            <ShieldCheck className="w-3 h-3 text-[#E8FF00]" />
+                            <span>Telegram Account</span>
+                          </>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2 mt-1.5">
+                        <button
+                          onClick={handleCopyId}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#181818] border border-white/10 text-[9px] font-mono text-white/60 hover:text-white transition-all cursor-pointer"
+                        >
+                          <span>ID: #{user.playerId.replace('usr_', '').slice(-6)}</span>
+                          {copiedId ? <Check className="w-2.5 h-2.5 text-emerald-400" /> : <Copy className="w-2.5 h-2.5" />}
+                        </button>
+                        {copiedId && (
+                          <span className="text-[9px] text-emerald-400 font-arcade">Copied!</span>
+                        )}
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="text-[10px] font-arcade text-white/50 flex items-center gap-1 mt-0.5">
-                    <Phone className="w-3 h-3 text-[#E8FF00]" />
-                    <span>{user.phone || '0912345678'}</span>
+                  {/* VIP XP Bar */}
+                  <div className="pt-2 border-t border-white/10 space-y-1.5">
+                    <div className="flex items-center justify-between text-[10px] font-arcade">
+                      <div className="flex items-center gap-1 text-[#E8FF00] font-black">
+                        <Crown className="w-3 h-3" />
+                        <span>{vipTier}</span>
+                      </div>
+                      <span className="text-white/40">LEVEL {level} • {levelProgressXp.toLocaleString()} / {levelTotalXp.toLocaleString()} XP</span>
+                    </div>
+                    <div className="w-full h-1.5 rounded-full bg-[#1c1c1c] overflow-hidden">
+                      <div
+                        className="h-full bg-[#E8FF00] rounded-full shadow-[0_0_8px_rgba(232,255,0,0.6)] transition-all duration-500"
+                        style={{ width: `${levelPercent}%` }}
+                      />
+                    </div>
                   </div>
 
-                  <div className="flex items-center gap-2 mt-1.5">
-                    <button
-                      onClick={handleCopyId}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#181818] border border-white/10 text-[9px] font-mono text-white/60 hover:text-white transition-all cursor-pointer"
-                    >
-                      <span>ID: #{user.playerId.replace('usr_', '').slice(-6)}</span>
-                      {copiedId ? <Check className="w-2.5 h-2.5 text-emerald-400" /> : <Copy className="w-2.5 h-2.5" />}
-                    </button>
-                    {copiedId && (
-                      <span className="text-[9px] text-emerald-400 font-arcade">Copied!</span>
-                    )}
+                  {/* 3 Stats */}
+                  <div className="grid grid-cols-3 gap-2 pt-1 text-center font-arcade">
+                    <div className="p-2 rounded-xl bg-[#161616] border border-white/5">
+                      <div className="text-[8px] text-white/40 uppercase">GAMES</div>
+                      <div className="font-black text-xs text-white mt-0.5">{totalGamesPlayed}</div>
+                    </div>
+                    <div className="p-2 rounded-xl bg-[#161616] border border-white/5">
+                      <div className="text-[8px] text-white/40 uppercase">TOTAL WON</div>
+                      <div className="font-black text-xs text-[#E8FF00] mt-0.5">{totalWonETB.toLocaleString()} B</div>
+                    </div>
+                    <div className="p-2 rounded-xl bg-[#161616] border border-white/5">
+                      <div className="text-[8px] text-white/40 uppercase">STREAK</div>
+                      <div className="font-black text-xs text-amber-400 mt-0.5 flex items-center justify-center gap-0.5">
+                        <Flame className="w-3 h-3 text-amber-400 fill-amber-400" />
+                        <span>{currentStreak}x</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
-
-              {/* VIP XP Bar */}
-              <div className="pt-2 border-t border-white/10 space-y-1.5">
-                <div className="flex items-center justify-between text-[10px] font-arcade">
-                  <div className="flex items-center gap-1 text-[#E8FF00] font-black">
-                    <Crown className="w-3 h-3" />
-                    <span>{user.vipTier || 'VIP CHAMPION'}</span>
-                  </div>
-                  <span className="text-white/40">LEVEL 4 • 2,400 / 3,000 XP</span>
-                </div>
-                <div className="w-full h-1.5 rounded-full bg-[#1c1c1c] overflow-hidden">
-                  <div
-                    className="h-full bg-[#E8FF00] rounded-full shadow-[0_0_8px_rgba(232,255,0,0.6)]"
-                    style={{ width: '80%' }}
-                  />
-                </div>
-              </div>
-
-              {/* 3 Stats */}
-              <div className="grid grid-cols-3 gap-2 pt-1 text-center font-arcade">
-                <div className="p-2 rounded-xl bg-[#161616] border border-white/5">
-                  <div className="text-[8px] text-white/40 uppercase">GAMES</div>
-                  <div className="font-black text-xs text-white mt-0.5">{user.totalGamesPlayed || 84}</div>
-                </div>
-                <div className="p-2 rounded-xl bg-[#161616] border border-white/5">
-                  <div className="text-[8px] text-white/40 uppercase">TOTAL WON</div>
-                  <div className="font-black text-xs text-[#E8FF00] mt-0.5">{(user.totalWonETB || 2940).toLocaleString()} B</div>
-                </div>
-                <div className="p-2 rounded-xl bg-[#161616] border border-white/5">
-                  <div className="text-[8px] text-white/40 uppercase">STREAK</div>
-                  <div className="font-black text-xs text-amber-400 mt-0.5 flex items-center justify-center gap-0.5">
-                    <Flame className="w-3 h-3 text-amber-400 fill-amber-400" />
-                    <span>3x</span>
-                  </div>
-                </div>
-              </div>
-            </div>
+              );
+            })()}
 
             {/* 2. WALLET SUMMARY & FAST CASHIER */}
             <div className="p-4 rounded-2xl bg-[#111111] border border-white/10 space-y-3">

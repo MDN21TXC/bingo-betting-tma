@@ -954,6 +954,74 @@ export class DatabaseService {
     return stmt.get(gameId, ticketId) as ClaimRow | undefined;
   }
 
+  // ==================== USER PROFILE & STATS ====================
+
+  public getUserStats(userId: string): {
+    totalGames: number;
+    totalWon: number;
+    currentStreak: number;
+    xp: number;
+    level: number;
+    levelProgressXp: number;
+    levelTotalXp: number;
+    levelPercent: number;
+    vipTier: string;
+  } {
+    // 1. Total distinct games played by this user
+    const gamesStmt = this.db.prepare('SELECT COUNT(DISTINCT game_id) as c FROM player_tickets WHERE user_id = ?');
+    const totalGames = (gamesStmt.get(userId) as any)?.c || 0;
+
+    // 2. Total winnings from immutable double-entry ledger
+    const wonStmt = this.db.prepare(
+      "SELECT COALESCE(SUM(amount), 0) as total FROM ledger_transactions WHERE user_id = ? AND type = 'WIN_PAYOUT'"
+    );
+    const totalWon = Math.max(0, (wonStmt.get(userId) as any)?.total || 0);
+
+    // 3. User's isolated current win streak
+    const recentGamesStmt = this.db.prepare(
+      'SELECT DISTINCT game_id, MAX(purchased_at) as latest_purchase FROM player_tickets WHERE user_id = ? GROUP BY game_id ORDER BY latest_purchase DESC LIMIT 50'
+    );
+    const recentGames = recentGamesStmt.all(userId) as Array<{ game_id: string; latest_purchase: string }>;
+
+    let currentStreak = 0;
+    const claimStmt = this.db.prepare("SELECT 1 FROM bingo_claims WHERE user_id = ? AND game_id = ? AND status = 'VERIFIED' LIMIT 1");
+    for (const g of recentGames) {
+      const won = claimStmt.get(userId, g.game_id);
+      if (won) {
+        currentStreak++;
+      } else {
+        break;
+      }
+    }
+
+    // 4. Dynamic XP, Level, and VIP progression
+    const winsStmt = this.db.prepare("SELECT COUNT(*) as c FROM bingo_claims WHERE user_id = ? AND status = 'VERIFIED'");
+    const totalWins = (winsStmt.get(userId) as any)?.c || 0;
+    const xp = Math.floor(totalGames * 20 + Math.floor(totalWon / 5) + totalWins * 50);
+
+    const xpPerLevel = 500;
+    const level = Math.floor(xp / xpPerLevel) + 1;
+    const levelProgressXp = xp % xpPerLevel;
+    const levelPercent = Math.min(100, Math.round((levelProgressXp / xpPerLevel) * 100));
+
+    let vipTier = 'BRONZE VIP';
+    if (level >= 10) vipTier = 'VIP CHAMPION';
+    else if (level >= 6) vipTier = 'GOLD VIP';
+    else if (level >= 3) vipTier = 'SILVER VIP';
+
+    return {
+      totalGames,
+      totalWon,
+      currentStreak,
+      xp,
+      level,
+      levelProgressXp,
+      levelTotalXp: xpPerLevel,
+      levelPercent,
+      vipTier
+    };
+  }
+
   // ==================== AUDIT LOGS ====================
 
   public recordAuditLog(log: {

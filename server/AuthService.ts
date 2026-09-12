@@ -617,7 +617,8 @@ export class AuthService {
         role: user.role,
         account_status: user.account_status,
         registration_status: user.registration_status,
-        phone: user.phone
+        phone: user.phone,
+        telegram_username: user.telegram_username
       }
     };
   }
@@ -1301,13 +1302,37 @@ export class AuthService {
     const user = this.getUserById(playerId);
     if (!user) return null;
     const wallet = databaseService.getOrCreateWallet(user.id);
+    const stats = databaseService.getUserStats(user.id);
+
     return {
-      ...user,
+      id: user.id,
+      playerId: user.id,
+      telegram_id: user.telegram_id,
+      telegramId: user.telegram_id,
+      telegram_username: user.telegram_username,
+      username: user.username,
+      first_name: user.first_name,
+      last_name: user.last_name,
+      phone: user.phone || user.phone_number || null,
+      role: user.role,
+      account_status: user.account_status,
+      registration_status: user.registration_status,
+      referral_code: user.referral_code,
+      referred_by: user.referred_by,
+      created_at: user.created_at,
       walletBalance: wallet.balance,
       reservedBalance: wallet.reserved_balance,
-      totalGamesPlayed: 0,
-      totalWonETB: 0,
-      vipTier: user.role === 'ADMIN' ? 'Administrator' : 'Player'
+      totalGamesPlayed: stats.totalGames,
+      totalWonETB: stats.totalWon,
+      currentStreak: stats.currentStreak,
+      xp: stats.xp,
+      level: stats.level,
+      levelProgressXp: stats.levelProgressXp,
+      levelTotalXp: stats.levelTotalXp,
+      levelPercent: stats.levelPercent,
+      vipTier: user.role === 'ADMIN' ? 'Administrator' : stats.vipTier,
+      avatarUrl: user.avatarUrl,
+      isBot: Boolean(user.isBot)
     };
   }
 }
