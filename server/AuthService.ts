@@ -777,6 +777,25 @@ export class AuthService {
     const phone = this.pendingById.get(identifier) || this.normalizePhone(identifier);
     const pending = this.pendingRegistrations.get(phone);
     if (!pending) {
+      const user = databaseService.getUserByPhone(phone);
+      if (user && user.registration_status === 'COMPLETED') {
+        const session = databaseService.createSession(user.id, String(user.telegram_id || ''));
+        const wallet = databaseService.getOrCreateWallet(user.id);
+        const userRecord: UserRecord = {
+          ...user,
+          playerId: user.id,
+          walletBalance: wallet.balance,
+          isBot: false,
+          isVerified: true
+        };
+        return {
+          status: 'verified',
+          phone,
+          name: user.username,
+          user: userRecord,
+          token: session.id
+        };
+      }
       return { status: 'not_found', error: 'Registration request not found or expired' };
     }
     return {
@@ -793,23 +812,93 @@ export class AuthService {
     phone: string,
     telegramId: number | string,
     telegramUsername?: string
-  ): { success: boolean; user?: UserRecord; token?: string; error?: string } {
+  ): { success: boolean; user?: UserRecord; token?: string; error?: string; requiresVerification?: boolean } {
     const normalizedPhone = this.normalizePhone(phone);
     const pending = this.pendingRegistrations.get(normalizedPhone);
-    if (!pending) return { success: false, error: 'Pending registration not found' };
-
     const playerId = `tg_${telegramId}`;
-    const referralCode = this.generateUniqueReferralCode(pending.name);
 
     try {
+      // 1. If pending registration exists from web app form
+      if (pending) {
+        const referralCode = this.generateUniqueReferralCode(pending.name);
+        const created = databaseService.createUser({
+          id: playerId,
+          telegram_id: String(telegramId),
+          telegram_username: telegramUsername,
+          username: pending.name,
+          phone: normalizedPhone,
+          password_hash: pending.passwordHash,
+          password_salt: pending.salt,
+          referral_code: referralCode,
+          role: 'USER',
+          account_status: 'ACTIVE',
+          registration_status: 'COMPLETED'
+        });
+
+        databaseService.recordLedgerTransaction({
+          userId: created.id,
+          username: created.username,
+          type: 'BONUS',
+          amount: 1000.0,
+          description: 'Welcome Bonus for Phone Verification',
+          referenceId: `bonus_welcome_${created.id}`
+        });
+
+        const session = databaseService.createSession(created.id, String(telegramId));
+        const wallet = databaseService.getOrCreateWallet(created.id);
+
+        const userRecord: UserRecord = {
+          ...created,
+          playerId: created.id,
+          walletBalance: wallet.balance,
+          isBot: false,
+          isVerified: true
+        };
+
+        pending.status = 'verified';
+        pending.user = userRecord;
+        pending.token = session.id;
+
+        return { success: true, user: userRecord, token: session.id, requiresVerification: false };
+      }
+
+      // 2. Fallback / Direct Telegram Contact Share (user shared contact directly or server restarted)
+      let user = databaseService.getUserByPhone(normalizedPhone) || databaseService.getUserByTelegramId(String(telegramId));
+      if (user) {
+        // User already in database: ensure phone & status are updated
+        if (!user.phone || user.registration_status !== 'COMPLETED') {
+          user = databaseService.updateUser(user.id, {
+            phone: normalizedPhone,
+            registration_status: 'COMPLETED'
+          });
+        }
+        const session = databaseService.createSession(user.id, String(telegramId));
+        const wallet = databaseService.getOrCreateWallet(user.id);
+        const userRecord: UserRecord = {
+          ...user,
+          playerId: user.id,
+          walletBalance: wallet.balance,
+          isBot: false,
+          isVerified: true
+        };
+        return { success: true, user: userRecord, token: session.id, requiresVerification: false };
+      }
+
+      // Brand-new user direct verification
+      const baseName = telegramUsername || `Player_${normalizedPhone.slice(-4)}`;
+      let cleanUsername = baseName;
+      let suffix = 1;
+      while (databaseService.getUserByUsername(cleanUsername)) {
+        cleanUsername = `${baseName}_${suffix++}`;
+      }
+      const referralCode = this.generateUniqueReferralCode(cleanUsername);
+
       const created = databaseService.createUser({
         id: playerId,
         telegram_id: String(telegramId),
         telegram_username: telegramUsername,
-        username: pending.name,
+        username: cleanUsername,
         phone: normalizedPhone,
-        password_hash: pending.passwordHash,
-        password_salt: pending.salt,
         referral_code: referralCode,
         role: 'USER',
         account_status: 'ACTIVE',
@@ -836,11 +925,7 @@ export class AuthService {
         isVerified: true
       };
 
-      pending.status = 'verified';
-      pending.user = userRecord;
-      pending.token = session.id;
-
-      return { success: true, user: userRecord, token: session.id, requiresVerification: false } as any;
+      return { success: true, user: userRecord, token: session.id, requiresVerification: false };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
