@@ -92,4 +92,33 @@ describe('TelegramBot Contact Sharing Verification Suite', () => {
     expect(telegramBotService.normalizePhone('0911223344')).toBe('0911223344');
     expect(telegramBotService.normalizePhone('0711223344')).toBe('0711223344');
   });
+
+  it('should seamlessly verify and register user who directly shares contact without prior web form request', async () => {
+    const directPhone = '+251 98 934 2413';
+    const tgUserId = 55667788;
+    const update: TelegramUpdate = {
+      update_id: 1004,
+      message: {
+        message_id: 4,
+        from: { id: tgUserId, is_bot: false, first_name: 'Erk', username: 'erk_player' },
+        chat: { id: tgUserId, type: 'private' },
+        date: Math.floor(Date.now() / 1000),
+        contact: {
+          phone_number: directPhone,
+          first_name: 'Erk',
+          user_id: tgUserId
+        }
+      }
+    };
+
+    const res = await telegramBotService.handleWebhookUpdate(update);
+    expect(res.success).toBe(true);
+    expect(res.action).toBe('phone_verified');
+
+    // Confirm user is created in database with normalized phone
+    const user = authService.getUserByTelegramId(String(tgUserId));
+    expect(user).toBeDefined();
+    expect(user?.phone).toBe('0989342413');
+  });
 });
+
