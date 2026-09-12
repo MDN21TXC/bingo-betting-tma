@@ -1,0 +1,647 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * Glin UI — Glass Design Tokens (Apple Liquid Glass spec)
+ * https://github.com/glincker/glinui
+ *
+ * Key principles:
+ * - saturate(180%) always paired with blur in backdrop-filter
+ * - Higher surface opacity than old glassmorphism
+ * - Dark mode layered obsidian surfaces
+ * - Top border brighter than sides (light refraction edge)
+ * - 4.5:1 contrast ratio for text on glass (WCAG AA)
+ */
+
+@layer base {
+  :root {
+    --font-sans: 'Inter', 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-arcade: 'Oxanium', 'Outfit', sans-serif;
+    --font-tech: 'Oxanium', 'Space Grotesk', monospace;
+    --font-mono: 'Oxanium', 'Space Grotesk', monospace;
+
+    /* Theme: Deep Charcoal/Near-Black & Neon Yellow (Reference Design) */
+    --color-background: #080808;
+    --color-surface: #121212;
+    --color-card: #141414;
+    --color-border: rgba(255, 255, 255, 0.08);
+    --color-neon: #E8FF00;
+    --color-neon-glow: rgba(232, 255, 0, 0.45);
+
+    /* Telegram viewport & safe areas */
+    --tg-safe-top: var(--tg-content-safe-area-inset-top, env(safe-area-inset-top, 0px));
+    --tg-safe-bottom: var(--tg-content-safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+    --tg-viewport: var(--tg-viewport-height, 100vh);
+
+    /* Glass primitives */
+    --glass-blur-sm: 8px;
+    --glass-blur-md: 16px;
+    --glass-blur-lg: 24px;
+    --glass-blur-xl: 40px;
+
+    --glass-base-rgb: 255 255 255;
+    --glass-saturate: 180%;
+
+    --glass-border-alpha: 0.08;
+    --glass-border-strong-alpha: 0.16;
+    --glass-refraction-top-alpha: 0.25;
+
+    --glass-surface: rgba(255, 255, 255, 0.04);
+    --glass-border: rgba(255, 255, 255, var(--glass-border-alpha));
+    --glass-border-strong: rgba(255, 255, 255, var(--glass-border-strong-alpha));
+    --glass-refraction-top: rgba(255, 255, 255, var(--glass-refraction-top-alpha));
+
+    /* Radius & Spacing */
+    --radius-sm: 0.5rem;
+    --radius-md: 0.75rem;
+    --radius-lg: 1rem;
+    --radius-xl: 1.25rem;
+    --radius-2xl: 1.5rem;
+  }
+
+  html, body {
+    height: 100%;
+    overscroll-behavior-y: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: #080808;
+    color: #FFFFFF;
+    user-select: none;
+  }
+}
+
+/* ═══════════════════════════════════════════════
+   TELEGRAM SAFE-AREA CLASSES
+   ═══════════════════════════════════════════════ */
+.safe-top {
+  padding-top: max(0.5rem, var(--tg-safe-top));
+}
+.safe-bottom {
+  padding-bottom: max(0.75rem, var(--tg-safe-bottom));
+}
+.safe-pb-dock {
+  padding-bottom: calc(5rem + var(--tg-safe-bottom));
+}
+
+/* ═══════════════════════════════════════════════
+   ARCADE NEON DESIGN UTILITIES (REFERENCE DESIGN)
+   ═══════════════════════════════════════════════ */
+.font-arcade {
+  font-family: var(--font-arcade);
+}
+
+.font-tech {
+  font-family: var(--font-tech);
+}
+
+/* Chunky Neon Yellow Action Button */
+.btn-neon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-arcade);
+  font-weight: 800;
+  font-size: 0.875rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.75rem 1.25rem;
+  border-radius: 1rem;
+  background-color: #E8FF00;
+  color: #000000;
+  border: 1px solid #F4FF55;
+  box-shadow: 0 0 20px rgba(232, 255, 0, 0.4), 0 2px 4px rgba(0, 0, 0, 0.5);
+  transition: all 0.15s cubic-bezier(0.2, 0, 0, 1);
+  cursor: pointer;
+  user-select: none;
+}
+
+.btn-neon:hover {
+  background-color: #F0FF20;
+  box-shadow: 0 0 28px rgba(232, 255, 0, 0.6), 0 4px 8px rgba(0, 0, 0, 0.6);
+  transform: translateY(-1px);
+}
+
+.btn-neon:active {
+  transform: scale(0.96);
+  box-shadow: 0 0 12px rgba(232, 255, 0, 0.3);
+}
+
+.btn-neon:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+  filter: grayscale(40%);
+}
+
+/* Chunky Dark Arcade Button */
+.btn-dark-arcade {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-arcade);
+  font-weight: 700;
+  font-size: 0.8125rem;
+  letter-spacing: 0.03em;
+  padding: 0.65rem 1.1rem;
+  border-radius: 1rem;
+  background-color: #161616;
+  color: #FFFFFF;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+  transition: all 0.15s cubic-bezier(0.2, 0, 0, 1);
+  cursor: pointer;
+  user-select: none;
+}
+
+.btn-dark-arcade:hover {
+  background-color: #202020;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.btn-dark-arcade:active {
+  transform: scale(0.96);
+}
+
+/* Neon Outline Button */
+.btn-neon-outline {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-arcade);
+  font-weight: 700;
+  font-size: 0.8125rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.65rem 1.1rem;
+  border-radius: 1rem;
+  background-color: rgba(232, 255, 0, 0.06);
+  color: #E8FF00;
+  border: 1.5px solid #E8FF00;
+  box-shadow: 0 0 14px rgba(232, 255, 0, 0.2);
+  transition: all 0.15s cubic-bezier(0.2, 0, 0, 1);
+  cursor: pointer;
+  user-select: none;
+}
+
+.btn-neon-outline:hover {
+  background-color: rgba(232, 255, 0, 0.14);
+  box-shadow: 0 0 20px rgba(232, 255, 0, 0.35);
+}
+
+.btn-neon-outline:active {
+  transform: scale(0.96);
+}
+
+/* Arcade Dark Elevated Card */
+.card-arcade {
+  background: #121212;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 1.25rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7);
+  transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.card-arcade:hover {
+  border-color: rgba(255, 255, 255, 0.16);
+  transform: translateY(-1px);
+}
+
+/* Active / Highlighted Card (Neon Yellow glow) */
+.card-arcade-neon {
+  background: #14160a;
+  border: 1.5px solid #E8FF00;
+  border-radius: 1.25rem;
+  box-shadow: 0 0 24px rgba(232, 255, 0, 0.25), 0 8px 30px rgba(0, 0, 0, 0.8);
+}
+
+/* Badges & Chips */
+.badge-neon {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-family: var(--font-arcade);
+  font-weight: 800;
+  font-size: 0.6875rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.25rem 0.65rem;
+  border-radius: 9999px;
+  background-color: #E8FF00;
+  color: #000000;
+  box-shadow: 0 0 10px rgba(232, 255, 0, 0.35);
+}
+
+.badge-neon-dark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-family: var(--font-arcade);
+  font-weight: 800;
+  font-size: 0.6875rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.25rem 0.65rem;
+  border-radius: 9999px;
+  background-color: rgba(232, 255, 0, 0.12);
+  color: #E8FF00;
+  border: 1px solid rgba(232, 255, 0, 0.3);
+}
+
+/* ═══════════════════════════════════════════════
+   GLIN UI AURORA BACKGROUND
+   ═══════════════════════════════════════════════ */
+.aurora-bg {
+  position: relative;
+  background-color: #07090e;
+  overflow: hidden;
+}
+
+.aurora-bg::before {
+  content: '';
+  position: absolute;
+  top: -10%;
+  left: -10%;
+  width: 120%;
+  height: 60%;
+  background: radial-gradient(circle at 50% 30%, rgba(99, 102, 241, 0.12) 0%, rgba(6, 182, 212, 0.08) 35%, transparent 70%);
+  filter: blur(60px);
+  pointer-events: none;
+  z-index: 0;
+  animation: auroraDrift 16s ease-in-out infinite alternate;
+}
+
+.aurora-bg::after {
+  content: '';
+  position: absolute;
+  bottom: 0%;
+  right: -5%;
+  width: 80%;
+  height: 50%;
+  background: radial-gradient(circle at 70% 70%, rgba(168, 85, 247, 0.08) 0%, transparent 60%);
+  filter: blur(50px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ═══════════════════════════════════════════════
+   GLIN UI GLASS UTILITY CLASSES
+   ═══════════════════════════════════════════════ */
+.glass-surface,
+.glass-1,
+.glass-2,
+.glass-3,
+.glass-4,
+.glass-5 {
+  border: 1px solid var(--glass-border);
+  border-top: 1px solid var(--glass-refraction-top);
+  background-clip: padding-box;
+}
+
+/* Level 1: Subtle backdrop */
+.glass-1 {
+  background: var(--glass-1-surface);
+  backdrop-filter: saturate(var(--glass-saturate)) blur(var(--glass-1-blur));
+  -webkit-backdrop-filter: saturate(var(--glass-saturate)) blur(var(--glass-1-blur));
+  box-shadow: var(--glass-1-shadow);
+}
+
+/* Level 2: Secondary panels / pills */
+.glass-2 {
+  background: var(--glass-2-surface);
+  backdrop-filter: saturate(var(--glass-saturate)) blur(var(--glass-2-blur));
+  -webkit-backdrop-filter: saturate(var(--glass-saturate)) blur(var(--glass-2-blur));
+  box-shadow: var(--glass-2-shadow);
+}
+
+/* Level 3: Standard cards (default glass card) */
+.glass-surface,
+.glass-3 {
+  background: var(--glass-3-surface);
+  backdrop-filter: saturate(var(--glass-saturate)) blur(var(--glass-3-blur));
+  -webkit-backdrop-filter: saturate(var(--glass-saturate)) blur(var(--glass-3-blur));
+  box-shadow: var(--glass-3-shadow);
+}
+
+/* Level 4: Hover / Active elevated cards */
+.glass-4 {
+  background: var(--glass-4-surface);
+  backdrop-filter: saturate(var(--glass-saturate)) blur(var(--glass-4-blur));
+  -webkit-backdrop-filter: saturate(var(--glass-saturate)) blur(var(--glass-4-blur));
+  box-shadow: var(--glass-4-shadow);
+}
+
+/* Level 5: Modals / Drawers / Overlays */
+.glass-5 {
+  background: var(--glass-5-surface);
+  backdrop-filter: saturate(var(--glass-saturate)) blur(var(--glass-5-blur));
+  -webkit-backdrop-filter: saturate(var(--glass-saturate)) blur(var(--glass-5-blur));
+  box-shadow: var(--glass-5-shadow);
+}
+
+/* Legacy aliases mapped to Glin UI glass levels */
+.arcade-panel {
+  @apply glass-3 rounded-2xl;
+}
+
+.arcade-card {
+  @apply glass-3 rounded-2xl transition-all duration-200;
+}
+
+.arcade-card:hover {
+  @apply glass-4 -translate-y-0.5;
+}
+
+.arcade-card-gold {
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-top-color: rgba(245, 158, 11, 0.45);
+  backdrop-filter: saturate(var(--glass-saturate)) blur(16px);
+  -webkit-backdrop-filter: saturate(var(--glass-saturate)) blur(16px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3), 0 0 20px rgba(245, 158, 11, 0.15);
+}
+
+.arcade-card-magenta {
+  background: rgba(168, 85, 247, 0.08);
+  border: 1px solid rgba(168, 85, 247, 0.25);
+  border-top-color: rgba(168, 85, 247, 0.45);
+  backdrop-filter: saturate(var(--glass-saturate)) blur(16px);
+  -webkit-backdrop-filter: saturate(var(--glass-saturate)) blur(16px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3), 0 0 20px rgba(168, 85, 247, 0.15);
+}
+
+.glass-panel {
+  @apply glass-3;
+}
+
+.glass-card {
+  @apply glass-3;
+}
+
+/* ═══════════════════════════════════════════════
+   GLIN UI LIQUID BUTTONS
+   ═══════════════════════════════════════════════ */
+.liquid-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 0.875rem;
+  letter-spacing: -0.01em;
+  padding: 0.625rem 1.25rem;
+  border-radius: 0.875rem;
+  transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+  cursor: pointer;
+  user-select: none;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-top: 1px solid rgba(255, 255, 255, 0.38);
+}
+
+.liquid-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.15) 0%, transparent 60%);
+  pointer-events: none;
+}
+
+.liquid-btn:hover {
+  transform: scale(1.02) translateY(-1px);
+}
+
+.liquid-btn:active {
+  transform: scale(0.98) translateY(0px);
+}
+
+/* Primary Liquid Button (Indigo / Cyan Sheen) */
+.liquid-btn-primary {
+  background: linear-gradient(135deg, #4f46e5 0%, #06b6d4 100%);
+  color: #ffffff;
+  box-shadow: 0 4px 16px rgba(79, 70, 229, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+.liquid-btn-primary:hover {
+  box-shadow: 0 6px 24px rgba(79, 70, 229, 0.50), 0 0 20px rgba(6, 182, 212, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+/* Amber / Gold Liquid Button */
+.liquid-btn-amber {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  color: #05070b;
+  box-shadow: 0 4px 16px rgba(245, 158, 11, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.40);
+  font-weight: 700;
+}
+
+.liquid-btn-amber:hover {
+  box-shadow: 0 6px 24px rgba(245, 158, 11, 0.50), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
+/* Emerald Liquid Button */
+.liquid-btn-emerald {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: #ffffff;
+  box-shadow: 0 4px 16px rgba(16, 185, 129, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+.liquid-btn-emerald:hover {
+  box-shadow: 0 6px 24px rgba(16, 185, 129, 0.50), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+/* Frosted Glass Button */
+.liquid-btn-glass {
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  color: #f1f5f9;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.20), inset 0 1px 0 rgba(255, 255, 255, 0.20);
+}
+
+.liquid-btn-glass:hover {
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.30);
+}
+
+/* Legacy arcade button mapped to liquid button */
+.arcade-btn {
+  @apply liquid-btn liquid-btn-amber;
+}
+
+.arcade-btn-cyan {
+  @apply liquid-btn liquid-btn-primary;
+}
+
+.arcade-btn-magenta {
+  @apply liquid-btn;
+  background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+  color: #ffffff;
+  box-shadow: 0 4px 16px rgba(168, 85, 247, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+/* ═══════════════════════════════════════════════
+   BINGO BOARD CELLS (GLIN UI FROSTED GLASS)
+   ═══════════════════════════════════════════════ */
+.bingo-cell {
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  transition: transform 0.15s cubic-bezier(0.2, 0, 0, 1), box-shadow 0.15s ease, background 0.15s ease;
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  border-radius: 0.75rem;
+}
+
+.bingo-cell-empty {
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(241, 245, 249, 0.80);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-top-color: rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.bingo-cell-empty:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.bingo-cell-called {
+  background: rgba(6, 182, 212, 0.14);
+  color: #22d3ee;
+  border: 1px solid rgba(6, 182, 212, 0.45);
+  border-top-color: rgba(255, 255, 255, 0.50);
+  box-shadow: 0 0 16px rgba(6, 182, 212, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.30);
+  animation: liquidPulse 2.5s infinite ease-in-out;
+}
+
+.bingo-cell-daubed {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.25) 0%, rgba(5, 150, 105, 0.40) 100%);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.60);
+  border-top-color: rgba(255, 255, 255, 0.60);
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.40);
+}
+
+.bingo-cell-winner {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.35) 0%, rgba(236, 72, 153, 0.45) 100%);
+  color: #ffffff;
+  border: 1px solid rgba(236, 72, 153, 0.80);
+  border-top-color: rgba(255, 255, 255, 0.75);
+  box-shadow: 0 0 24px rgba(236, 72, 153, 0.50), inset 0 1px 0 rgba(255, 255, 255, 0.50);
+  transform: scale(1.05);
+  z-index: 10;
+}
+
+/* ═══════════════════════════════════════════════
+   LIQUID GLASS BINGO BALL
+   ═══════════════════════════════════════════════ */
+.bingo-ball {
+  position: relative;
+  border-radius: 50%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5), inset 0 2px 4px rgba(255, 255, 255, 0.45), inset 0 -4px 8px rgba(0, 0, 0, 0.35);
+}
+
+.bingo-ball::before {
+  content: '';
+  position: absolute;
+  top: 8%;
+  left: 20%;
+  width: 45%;
+  height: 35%;
+  background: radial-gradient(ellipse at center, rgba(255, 255, 255, 0.75) 0%, rgba(255, 255, 255, 0) 75%);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+/* ═══════════════════════════════════════════════
+   TEXT SHIMMER & GRADIENT TYPOGRAPHY
+   ═══════════════════════════════════════════════ */
+.shimmer-text {
+  background: linear-gradient(90deg, #f59e0b 0%, #fde68a 30%, #f59e0b 60%, #fde68a 100%);
+  background-size: 200% auto;
+  color: transparent;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: glassShimmer 3s linear infinite;
+}
+
+.shimmer-text-cyan {
+  background: linear-gradient(90deg, #06b6d4 0%, #a5f3fc 30%, #06b6d4 60%, #a5f3fc 100%);
+  background-size: 200% auto;
+  color: transparent;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: glassShimmer 2.5s linear infinite;
+}
+
+.neon-text-cyan {
+  color: #22d3ee;
+  text-shadow: 0 0 12px rgba(6, 182, 212, 0.45);
+}
+
+.neon-text-magenta {
+  color: #f472b6;
+  text-shadow: 0 0 12px rgba(244, 114, 182, 0.45);
+}
+
+.neon-text-gold {
+  color: #fbbf24;
+  text-shadow: 0 0 12px rgba(251, 191, 36, 0.45);
+}
+
+.neon-text-green {
+  color: #34d399;
+  text-shadow: 0 0 12px rgba(52, 211, 153, 0.45);
+}
+
+.score-display,
+.score-display-gold {
+  font-family: var(--font-sans);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+/* ═══════════════════════════════════════════════
+   CUSTOM SCROLLBARS
+   ═══════════════════════════════════════════════ */
+::-webkit-scrollbar       { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: rgba(10, 13, 20, 0.4); }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.35); }
+
+/* ═══════════════════════════════════════════════
+   KEYFRAMES & UTILITIES
+   ═══════════════════════════════════════════════ */
+@keyframes auroraDrift {
+  0%   { transform: translate(0px, 0px) scale(1); }
+  50%  { transform: translate(30px, -20px) scale(1.08); }
+  100% { transform: translate(0px, 0px) scale(1); }
+}
+
+@keyframes glassShimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.grid-cols-15 {
+  grid-template-columns: repeat(15, minmax(0, 1fr));
+}
