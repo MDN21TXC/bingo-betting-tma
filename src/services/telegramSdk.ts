@@ -16,6 +16,8 @@ declare global {
           selectionChanged: () => void;
         };
         themeParams: Record<string, string>;
+        platform?: string;
+        version?: string;
         initData?: string;
         initDataUnsafe?: {
           query_id?: string;
@@ -55,6 +57,7 @@ export class TelegramSdkService {
         tg.setBackgroundColor('#090d16');
         tg.enableClosingConfirmation();
         this.isTma = true;
+        this.logDiagnostics();
       } catch (e) {
         console.warn('Telegram SDK initialization note:', e);
       }
@@ -62,10 +65,36 @@ export class TelegramSdkService {
   }
 
   public isInsideTelegram(): boolean {
-    return Boolean(
-      typeof window !== 'undefined' &&
-        (window.Telegram?.WebApp?.initData || window.Telegram?.WebApp?.initDataUnsafe?.user)
-    );
+    if (typeof window === 'undefined') return false;
+    if (window.Telegram?.WebApp?.initData || window.Telegram?.WebApp?.initDataUnsafe?.user) {
+      return true;
+    }
+    if (Boolean(this.getInitData())) {
+      return true;
+    }
+    if (window.Telegram?.WebApp?.platform && window.Telegram.WebApp.platform !== 'unknown') {
+      return true;
+    }
+    const ua = navigator.userAgent || '';
+    if (/Telegram/i.test(ua)) {
+      return true;
+    }
+    return false;
+  }
+
+  public logDiagnostics() {
+    if (typeof window === 'undefined') return;
+    const tg = window.Telegram?.WebApp;
+    console.log('[TelegramDiagnostics] State:', {
+      hasTelegramObject: Boolean(window.Telegram),
+      hasWebApp: Boolean(tg),
+      platform: tg?.platform || 'none',
+      hasInitData: Boolean(this.getInitData()),
+      initDataLength: this.getInitData().length,
+      telegramUserId: tg?.initDataUnsafe?.user?.id || 'none',
+      telegramUsername: tg?.initDataUnsafe?.user?.username || 'none',
+      isInsideTelegram: this.isInsideTelegram()
+    });
   }
 
   public getInitData(): string {

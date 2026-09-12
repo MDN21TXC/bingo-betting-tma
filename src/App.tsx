@@ -118,8 +118,10 @@ export default function App() {
   const handleOpenSignUp = (mode: AuthModalMode = 'register') => {
     soundService.playClick();
     telegramSdk.triggerHaptic('medium');
-    const isTg = telegramSdk.isInsideTelegram() || Boolean(telegramSdk.getInitData());
-    setAuthModalMode(isTg ? 'tg_register' : mode);
+    const isTg = telegramSdk.isInsideTelegram() || Boolean(telegramSdk.getInitData()) || Boolean(auth.tempToken) || Boolean(auth.telegramUser);
+    const targetMode = isTg ? 'tg_register' : mode;
+    console.log('[App] handleOpenSignUp called. isInsideTelegram:', isTg, 'targetMode:', targetMode, 'authStatus:', auth.status);
+    setAuthModalMode(targetMode);
     setAuthModalOpen(true);
   };
 

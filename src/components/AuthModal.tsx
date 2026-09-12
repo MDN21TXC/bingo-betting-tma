@@ -75,10 +75,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [tgReferralCode, setTgReferralCode] = useState<string>('');
 
   // Synchronize internal mode whenever modal is opened or requested mode changes
-  const isInsideTg = telegramSdk.isInsideTelegram() || Boolean(telegramSdk.getInitData());
+  const isInsideTg =
+    telegramSdk.isInsideTelegram() ||
+    Boolean(telegramSdk.getInitData()) ||
+    Boolean(auth.tempToken) ||
+    Boolean(auth.telegramUser) ||
+    auth.status === 'NEW_USER' ||
+    auth.status === 'REGISTRATION_REQUIRED';
 
   React.useEffect(() => {
     if (isOpen) {
+      telegramSdk.logDiagnostics();
+      console.log('[AuthModal] Opened. isInsideTg:', isInsideTg, 'initialMode:', initialMode, 'authStatus:', auth.status);
       if (isInsideTg && (initialMode === 'register' || initialMode === 'tg_register' || initialMode === 'teaser')) {
         setMode('tg_register');
         if (auth.status === 'UNINITIALIZED' || auth.status === 'UNAUTHENTICATED') {
@@ -97,10 +105,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   // Guard: if inside Telegram, ensure mode is tg_register rather than register
   React.useEffect(() => {
-    if (isOpen && isInsideTg && mode === 'register') {
+    if (isOpen && isInsideTg && (mode === 'register' || mode === 'teaser')) {
       setMode('tg_register');
     }
   }, [isOpen, isInsideTg, mode]);
+
+  React.useEffect(() => {
+    if (isOpen && isInsideTg && !auth.tempToken && auth.status !== 'AUTHENTICATED' && auth.status !== 'AUTHENTICATING') {
+      console.log('[AuthModal] Triggering initAuth in tg_register mode');
+      auth.initAuth();
+    }
+  }, [isOpen, isInsideTg, auth.tempToken, auth.status]);
 
   React.useEffect(() => {
     if (auth.suggestedUsername && !tgUsername) {
@@ -641,11 +656,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   setErrorMessage(null);
                   setDeniedReason(null);
                 } else if (mode === 'verify') {
-                  setMode('register');
+                  setMode(isInsideTg ? 'tg_register' : 'register');
                   setErrorMessage(null);
                   setDeniedReason(null);
                 } else if (mode === 'tg_register') {
-                  setMode('login');
+                  onClose();
                   setErrorMessage(null);
                 } else {
                   onClose();
@@ -811,7 +826,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <button
                 onClick={() => {
                   soundService.playClick();
-                  setMode('register');
+                  setMode(isInsideTg ? 'tg_register' : 'register');
                 }}
                 className="btn-neon w-full py-3 rounded-xl text-xs font-black uppercase tracking-wide flex items-center justify-center gap-1.5 cursor-pointer"
               >
@@ -834,8 +849,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </div>
           )}
 
-          {/* 2. REGISTER MODE */}
-          {mode === 'register' && (
+          {/* 2. REGISTER MODE (Fallback for users outside Telegram) */}
+          {mode === 'register' && !isInsideTg && (
             <form onSubmit={handleRegisterSubmit} className="space-y-3">
               <div>
                 <h2 className="text-sm font-black text-white uppercase">Create Account</h2>
@@ -1012,7 +1027,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       onClick={() => {
                         soundService.playClick();
                         setDeniedReason(null);
-                        setMode('register');
+                        setMode(isInsideTg ? 'tg_register' : 'register');
                       }}
                       className="py-2 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-white text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1"
                     >
@@ -1243,7 +1258,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   onClick={() => {
                     soundService.playClick();
                     setErrorMessage(null);
-                    setMode('register');
+                    setMode(isInsideTg ? 'tg_register' : 'register');
                   }}
                   className="text-[#E8FF00] font-black hover:underline cursor-pointer"
                 >

@@ -73,6 +73,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setReferralCode(startParam);
     }
 
+    telegramSdk.logDiagnostics();
+    console.log('[AuthContext] initAuth. Has initData:', Boolean(initData), 'length:', initData?.length || 0);
+
     if (initData) {
       setStatus('AUTHENTICATING');
       try {
@@ -83,6 +86,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
 
         const data = await res.json();
+        console.log('[AuthContext] /api/auth/telegram response:', {
+          status: data?.status,
+          success: data?.success,
+          hasUser: Boolean(data?.user),
+          hasTempToken: Boolean(data?.tempToken)
+        });
 
         if (!res.ok || !data.success) {
           setError(data.error || 'Telegram authentication failed');
